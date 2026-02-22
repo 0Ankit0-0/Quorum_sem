@@ -53,7 +53,7 @@ async def list_reports():
         
         reports = []
         
-        for report_file in settings.REPORTS_DIR.glob("*"):
+        for report_file in settings.REPORTS_DIR.rglob("*"):
             if report_file.is_file():
                 reports.append({
                     "filename": report_file.name,
@@ -80,6 +80,14 @@ async def download_report(filename: str):
 
         requested = Path(filename).name
         report_path = settings.REPORTS_DIR / requested
+        if not report_path.exists() or not report_path.is_file():
+            matches = [
+                p for p in settings.REPORTS_DIR.rglob(requested)
+                if p.is_file()
+            ]
+            if matches:
+                matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+                report_path = matches[0]
 
         if not report_path.exists() or not report_path.is_file():
             raise HTTPException(

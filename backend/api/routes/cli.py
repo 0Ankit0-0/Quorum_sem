@@ -258,15 +258,22 @@ async def execute_command(request: CommandRequest) -> CommandResponse:
         Command execution result with output and exit code
     """
     try:
+        command_tokens = shlex.split(request.command.strip())
+        if not command_tokens:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Command cannot be empty"
+            )
+
         # Validate command starts with 'quorum'
-        if not request.command.startswith("quorum"):
+        if command_tokens[0] != "quorum":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Only 'quorum' commands are allowed"
             )
         
         # Build the full command
-        full_command = [request.command] + (request.args or [])
+        full_command = command_tokens + (request.args or [])
         
         logger.info(f"Executing command: {' '.join(full_command)}")
         

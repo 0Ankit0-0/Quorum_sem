@@ -2,13 +2,13 @@ import { motion } from "framer-motion";
 import { Activity, AlertTriangle, FileText, Server, TrendingUp, Zap } from "lucide-react";
 import AppLayout from "@/components/layout/AppLayout";
 import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Area, AreaChart
 } from "recharts";
 import {
-  mockSystemStatus, mockSeverityDistribution, mockTimelineData,
-  mockAnomalies, formatDate, formatTimeAgo, formatNumber
-} from "@/lib/mockData";
+  formatTimeAgo, formatNumber
+} from "@/lib/formatters";
+import { useQuorumData } from "@/hooks/useQuorumData";
 
 const fadeUp = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0 } };
 const container = { hidden: {}, show: { transition: { staggerChildren: 0.06 } } };
@@ -29,14 +29,12 @@ const StatCard = ({
   value,
   sub,
   color = "cyan",
-  delay = 0,
 }: {
   icon: any;
   label: string;
   value: string;
   sub?: string;
   color?: string;
-  delay?: number;
 }) => {
   const colorMap: Record<string, string> = {
     cyan: "var(--cyan)",
@@ -83,15 +81,18 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 export default function Dashboard() {
+  const { systemStatus, severityDistribution, timelineData, anomalies } =
+    useQuorumData();
+
   return (
     <AppLayout title="Dashboard" subtitle="System overview — Air-Gapped Environment">
       <motion.div variants={container} initial="hidden" animate="show" className="space-y-6">
         {/* Stats Row */}
         <motion.div variants={container} className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard icon={FileText} label="Total Logs" value={formatNumber(mockSystemStatus.total_logs)} sub="All-time ingested" color="cyan" />
-          <StatCard icon={AlertTriangle} label="Anomalies" value={formatNumber(mockSystemStatus.total_anomalies)} sub="Detected threats" color="critical" />
-          <StatCard icon={Activity} label="Sessions" value={String(mockSystemStatus.active_sessions)} sub="Analysis runs" color="high" />
-          <StatCard icon={Server} label="Nodes Online" value={`${mockSystemStatus.nodes_online}/8`} sub="Hub + terminals" color="low" />
+          <StatCard icon={FileText} label="Total Logs" value={formatNumber(systemStatus.total_logs)} sub="All-time ingested" color="cyan" />
+          <StatCard icon={AlertTriangle} label="Anomalies" value={formatNumber(systemStatus.total_anomalies)} sub="Detected threats" color="critical" />
+          <StatCard icon={Activity} label="Sessions" value={String(systemStatus.active_sessions)} sub="Analysis runs" color="high" />
+          <StatCard icon={Server} label="Nodes Online" value={`${systemStatus.nodes_online}/8`} sub="Hub + terminals" color="low" />
         </motion.div>
 
         {/* Charts Row */}
@@ -106,13 +107,13 @@ export default function Dashboard() {
               <TrendingUp className="w-4 h-4 text-muted-foreground" />
             </div>
             <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={mockSeverityDistribution} barSize={32}>
+              <BarChart data={severityDistribution} barSize={32}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                 <XAxis dataKey="severity" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))", fontFamily: "JetBrains Mono" }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
                 <Tooltip content={<CustomTooltip />} />
                 <Bar dataKey="count" radius={[3, 3, 0, 0]}>
-                  {mockSeverityDistribution.map((entry, index) => (
+                  {severityDistribution.map((entry, index) => (
                     <rect key={index} fill={entry.fill} />
                   ))}
                 </Bar>
@@ -130,7 +131,7 @@ export default function Dashboard() {
               <Zap className="w-4 h-4 text-muted-foreground" />
             </div>
             <ResponsiveContainer width="100%" height={200}>
-              <AreaChart data={mockTimelineData}>
+              <AreaChart data={timelineData}>
                 <defs>
                   <linearGradient id="gradAnomalies" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="hsl(var(--cyan))" stopOpacity={0.3} />
@@ -159,7 +160,7 @@ export default function Dashboard() {
               <h3 className="text-sm font-semibold">Recent Anomalies</h3>
               <p className="text-xs text-muted-foreground">Latest detected threats</p>
             </div>
-            <span className="badge-critical">{mockAnomalies.filter(a => a.severity === "CRITICAL").length} CRITICAL</span>
+            <span className="badge-critical">{anomalies.filter(a => a.severity === "CRITICAL").length} CRITICAL</span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -171,7 +172,7 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {mockAnomalies.map((a, i) => (
+                {anomalies.map((a, i) => (
                   <motion.tr
                     key={a.id}
                     className="table-row-cyber border-b border-border/50 last:border-0"
@@ -214,3 +215,4 @@ export default function Dashboard() {
     </AppLayout>
   );
 }
+

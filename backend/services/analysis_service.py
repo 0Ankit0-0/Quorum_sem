@@ -34,6 +34,7 @@ class AnalysisService:
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         threshold: float = 0.70,
+        log_source: Optional[str] = None,
         contamination: float = 0.05,
         progress_callback: Optional[callable] = None,
         auto_report: bool = True,
@@ -48,9 +49,11 @@ class AnalysisService:
         logger.info(f"Starting analysis session {session_id} | algorithm={algorithm}")
 
         try:
-            self._create_session(session_id, algorithm, start_time, end_time, threshold)
+            self._create_session(
+                session_id, algorithm, start_time, end_time, threshold, log_source
+            )
 
-            logs_data = self._load_logs(start_time, end_time)
+            logs_data = self._load_logs(start_time, end_time, log_source)
             total_logs = len(logs_data)
             if total_logs == 0:
                 return {
@@ -176,6 +179,7 @@ class AnalysisService:
                 "duration_seconds": round(duration, 2),
                 "algorithm": algorithm,
                 "threshold": threshold,
+                "log_source": log_source,
                 "summary": summary,
             }
 
@@ -215,6 +219,7 @@ class AnalysisService:
         self,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
+        log_source: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         try:
             conditions = []
@@ -226,6 +231,17 @@ class AnalysisService:
             if end_time:
                 conditions.append("timestamp <= ?")
                 params.append(end_time)
+            if log_source and log_source.lower() not in {"all", "latest"}:
+                conditions.append("source = ?")
+                params.append(log_source)
+            elif log_source and log_source.lower() == "latest":
+                latest = db.fetch_one(
+                    "SELECT source FROM logs ORDER BY ingestion_time DESC LIMIT 1"
+                )
+                latest_source = latest.get("source") if latest else None
+                if latest_source:
+                    conditions.append("source = ?")
+                    params.append(latest_source)
 
             where_clause = " AND ".join(conditions) if conditions else "1=1"
 
@@ -245,7 +261,9 @@ class AnalysisService:
             logger.error(f"Failed to load logs: {e}")
             raise DatabaseError(f"Log loading failed: {e}")
 
-    def _create_session(self, session_id, algorithm, start_time, end_time, threshold):
+    def _create_session(
+        self, session_id, algorithm, start_time, end_time, threshold, log_source
+    ):
         import json
 
         session_data = {
@@ -260,6 +278,7 @@ class AnalysisService:
                     "start_time": start_time.isoformat() if start_time else None,
                     "end_time": end_time.isoformat() if end_time else None,
                     "threshold": threshold,
+                    "log_source": log_source,
                 }
             ),
             "metadata": json.dumps({}),

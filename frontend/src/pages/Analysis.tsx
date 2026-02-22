@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Play,
@@ -8,12 +8,13 @@ import {
   FileText,
 } from "lucide-react";
 import AppLayout from "@/components/layout/AppLayout";
+import { formatTimeAgo, formatNumber } from "@/lib/formatters";
 import {
-  mockSessions,
-  formatDate,
-  formatTimeAgo,
-  formatNumber,
-} from "@/lib/mockData";
+  getUploadedFiles,
+  runAnalysis,
+  type UploadedFile,
+} from "@/lib/api-functions";
+import { useQuorumData } from "@/hooks/useQuorumData";
 import {
   Select,
   SelectContent,
@@ -24,7 +25,6 @@ import {
   SelectLabel,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { getUploadedFiles, type UploadedFile } from "@/lib/api-functions";
 import { toast } from "sonner";
 import MitreHeatmap from "@/components/analysis/MitreHeatmap";
 
@@ -32,7 +32,7 @@ const algorithms = [
   {
     id: "ensemble",
     label: "Ensemble (Recommended)",
-    desc: "4-component weighted hybrid — best accuracy",
+    desc: "4-component weighted hybrid - best accuracy",
   },
   {
     id: "isolation_forest",
@@ -66,17 +66,15 @@ const getThresholdColor = (value: number) => {
 };
 
 export default function Analysis() {
+  const { sessions, refresh } = useQuorumData();
   const [selectedAlgo, setSelectedAlgo] = useState("ensemble");
   const [threshold, setThreshold] = useState([0.65]);
   const [logSource, setLogSource] = useState("latest");
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [sessions, setSessions] = useState(mockSessions);
   const [loadingFiles, setLoadingFiles] = useState(true);
 
   useEffect(() => {
-    // Fetch uploaded files on component mount
     const fetchFiles = async () => {
       try {
         const data = await getUploadedFiles();
@@ -89,57 +87,44 @@ export default function Analysis() {
       }
     };
 
-    fetchFiles();
+    void fetchFiles();
   }, []);
 
-  const handleRun = () => {
+  const handleRun = async () => {
     setRunning(true);
-    setProgress(0);
-    const iv = setInterval(() => {
-      setProgress((p) => {
-        if (p >= 100) {
-          clearInterval(iv);
-          setRunning(false);
-
-          // Determine log count based on source
-          let logCount = 47_284;
-          if (logSource === "all") {
-            logCount = uploadedFiles.reduce(
-              (sum) => sum + Math.floor(Math.random() * 50000 + 10000),
-              0,
-            );
-          } else if (logSource !== "latest") {
-            logCount = Math.floor(Math.random() * 100000 + 20000);
-          }
-
-          setSessions((prev) => [
-            {
-              id: `SES-2024-00${prev.length + 1}`,
-              algorithm: selectedAlgo,
-              threshold: threshold[0],
-              total_logs: logCount,
-              anomalies_found: Math.floor(Math.random() * 200 + 50),
-              duration_seconds: +(Math.random() * 8 + 6).toFixed(1),
-              created_at: new Date().toISOString(),
-              status: "COMPLETED",
-            },
-            ...prev,
-          ]);
-
-          toast.success("Analysis completed successfully");
-          return 100;
-        }
-        return p + Math.random() * 12;
-      });
-    }, 200);
+    try {
+      const payload = {
+        algorithm: selectedAlgo,
+        threshold: threshold[0],
+        log_source: logSource,
+      };
+      const result = await runAnalysis(payload);
+      await refresh();
+      toast.success(
+        `Analysis complete: ${formatNumber(result.anomalies_detected ?? 0)} anomalies`,
+      );
+    } catch (error) {
+      console.error("Analysis failed", error);
+      toast.error("Analysis failed");
+    } finally {
+      setRunning(false);
+    }
   };
+
+  const canRun = useMemo(() => {
+    if (running) return false;
+    if (logSource === "all") return true;
+    if (logSource === "latest") return uploadedFiles.length > 0;
+    return uploadedFiles.some((file) => file.filename === logSource);
+  }, [logSource, running, uploadedFiles]);
 
   const getLogSourceDisplay = () => {
     if (logSource === "all") return `All files (${uploadedFiles.length})`;
-    if (logSource === "latest")
+    if (logSource === "latest") {
       return uploadedFiles.length > 0
         ? `Latest: ${uploadedFiles[0]?.filename}`
         : "Latest";
+    }
     const file = uploadedFiles.find((f) => f.filename === logSource);
     return file ? file.filename : logSource;
   };
@@ -150,7 +135,6 @@ export default function Analysis() {
       subtitle="Run AI anomaly detection on ingested logs"
     >
       <div className="space-y-6">
-        {/* Config Form */}
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -162,7 +146,6 @@ export default function Analysis() {
           </h3>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Algorithm Selection */}
             <div className="space-y-2">
               <label className="text-xs text-muted-foreground uppercase tracking-wide">
                 Algorithm
@@ -211,9 +194,7 @@ export default function Analysis() {
               </div>
             </div>
 
-            {/* Log Source, Threshold + Run */}
             <div className="space-y-6">
-              {/* Log Source Selector */}
               <div>
                 <label className="text-xs text-muted-foreground uppercase tracking-wide block mb-2">
                   Log Source
@@ -255,38 +236,18 @@ export default function Analysis() {
                                 {file.filename}
                               </span>
                               <span className="text-xs text-muted-foreground">
-                                {(file.size_bytes / 1024 / 1024).toFixed(2)} MB
-                                •{" "}
-                                {new Date(
-                                  file.uploaded_at,
-                                ).toLocaleDateString()}
+                                {(file.size_bytes / 1024 / 1024).toFixed(2)} MB -{" "}
+                                {new Date(file.uploaded_at).toLocaleDateString()}
                               </span>
                             </div>
                           </SelectItem>
                         ))}
                       </>
                     )}
-                    {uploadedFiles.length === 0 && (
-                      <>
-                        <SelectSeparator />
-                        <div className="px-2 py-3 text-xs text-center text-muted-foreground">
-                          No uploaded files found. Upload logs first.
-                        </div>
-                      </>
-                    )}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground mt-1.5">
-                  {logSource === "all" && "Process all uploaded log files"}
-                  {logSource === "latest" &&
-                    "Analyze the most recently uploaded file"}
-                  {logSource !== "all" &&
-                    logSource !== "latest" &&
-                    "Analyze selected file only"}
-                </p>
               </div>
 
-              {/* Threshold Slider */}
               <div>
                 <div className="flex justify-between items-center mb-3">
                   <label className="text-xs text-muted-foreground uppercase tracking-wide">
@@ -317,59 +278,12 @@ export default function Analysis() {
                 </div>
               </div>
 
-              <div
-                className="p-4 rounded-md"
-                style={{ background: "hsl(var(--muted))" }}
-              >
-                <div className="space-y-2 text-xs font-mono">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Algorithm</span>
-                    <span className="text-foreground">{selectedAlgo}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Threshold</span>
-                    <span className="text-cyan">{threshold[0].toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Log Source</span>
-                    <span className="text-foreground truncate ml-2">
-                      {logSource === "all"
-                        ? "All files"
-                        : logSource === "latest"
-                          ? "Latest"
-                          : logSource}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {running && (
-                <div>
-                  <div className="flex justify-between text-xs font-mono mb-1 text-muted-foreground">
-                    <span>Analyzing logs...</span>
-                    <span>{Math.round(progress)}%</span>
-                  </div>
-                  <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                    <motion.div
-                      className="h-full rounded-full bg-cyan-400"
-                      animate={{ width: `${progress}%` }}
-                      transition={{ duration: 0.1 }}
-                      style={{ background: "hsl(var(--cyan))" }}
-                    />
-                  </div>
-                </div>
-              )}
-
               <button
                 onClick={handleRun}
-                disabled={
-                  running || (uploadedFiles.length === 0 && logSource !== "all")
-                }
+                disabled={!canRun}
                 className="w-full flex items-center justify-center gap-2 py-3 rounded-md text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{
-                  background: running
-                    ? "hsl(var(--muted))"
-                    : "hsl(var(--cyan))",
+                  background: running ? "hsl(var(--muted))" : "hsl(var(--cyan))",
                   color: running
                     ? "hsl(var(--muted-foreground))"
                     : "hsl(var(--background))",
@@ -381,10 +295,9 @@ export default function Analysis() {
             </div>
           </div>
         </motion.div>
-        {/* MITRE ATT&CK Heatmap */}
+
         <MitreHeatmap />
 
-        {/* Sessions List */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -439,3 +352,4 @@ export default function Analysis() {
     </AppLayout>
   );
 }
+

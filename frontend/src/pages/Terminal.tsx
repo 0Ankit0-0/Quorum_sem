@@ -7,6 +7,19 @@ import {
   ChevronDown,
 } from "lucide-react";
 import AppLayout from "@/components/layout/AppLayout";
+import {
+  exportSyncPackage,
+  generateReport,
+  getDevices,
+  getHubInfo,
+  getLogs,
+  getNodes,
+  getRootInfo,
+  getSessions,
+  getSystemStatus,
+  runAnalysis,
+} from "@/lib/api-functions";
+import { cliService } from "@/lib/cliService";
 
 interface TerminalLine {
   id: number;
@@ -23,128 +36,36 @@ const now = () =>
     second: "2-digit",
   });
 
-const mockResponses: Record<string, string | string[]> = {
-  help: [
-    "Available commands:",
-    "  status          — System status overview",
-    "  scan usb        — Scan USB devices",
-    "  scan lan        — Scan LAN nodes",
-    "  logs recent     — Show recent log entries",
-    "  logs ingest     — Ingest log files",
-    "  analyze run     — Run analysis session",
-    "  analyze list    — List analysis sessions",
-    "  hub nodes       — Show registered nodes",
-    "  hub export      — Export sync package",
-    "  report gen      — Generate report",
-    "  clear           — Clear terminal",
-    "  whoami          — Current user info",
-    "  uptime          — System uptime",
-    "  version         — Quorum version",
-  ].join("\n"),
-  status: [
-    "┌─────────────────────────────────┐",
-    "│  QUORUM SYSTEM STATUS           │",
-    "├─────────────────────────────────┤",
-    "│  Environment:  AIR-GAPPED       │",
-    "│  Total Logs:   284,913          │",
-    "│  Anomalies:    1,847            │",
-    "│  Sessions:     12               │",
-    "│  Nodes Online: 7/8              │",
-    "│  Uptime:       2,304 hours      │",
-    "│  Status:       ● OPERATIONAL    │",
-    "└─────────────────────────────────┘",
-  ].join("\n"),
-  whoami: "root@quorum-hub [AIR-GAPPED] — Role: Administrator",
-  uptime:
-    "System uptime: 2304 hours (96 days) — Last reboot: 2025-11-17T08:00:00Z",
-  version: "Quorum v2.4.1 — Build 20260220 — Engine: Ensemble ML v3.1",
-  "scan usb": [
-    "Scanning USB devices...",
-    "",
-    "  [USB-001] SanDisk Ultra 64GB      — Mass Storage   — Risk: LOW",
-    "  [USB-002] Unknown Device           — UNKNOWN        — Risk: HIGH ⚠",
-    "  [USB-003] USB Network Adapter      — Network        — Risk: CRITICAL ⚠⚠",
-    "  [USB-004] Logitech Keyboard        — HID            — Risk: LOW",
-    "",
-    "4 devices found. 2 flagged for review.",
-  ].join("\n"),
-  "scan lan": [
-    "Scanning local network (192.168.1.0/24)...",
-    "",
-    "  192.168.1.10   WORKSTATION-14   Windows 11          ONLINE   MEDIUM",
-    "  192.168.1.20   SERVER-02        Windows Server 2022 ONLINE   LOW",
-    "  192.168.1.45   UNKNOWN          UNKNOWN             ONLINE   CRITICAL ⚠",
-    "  192.168.1.100  SERVER-05        Ubuntu 22.04        ONLINE   LOW",
-    "",
-    "4 nodes discovered. 1 unidentified host.",
-  ].join("\n"),
-  "logs recent": [
-    "Last 5 log entries:",
-    "",
-    "  [CRITICAL] 16:47:23 WKST-14  4625 - An account failed to log on",
-    "  [HIGH]     16:47:19 SRV-02   The Windows Firewall service started",
-    "  [MEDIUM]   16:47:15 auth.log sudo: USER=root ; COMMAND=/bin/bash",
-    "  [LOW]      16:47:11 syslog   kernel: usb 1-1: new USB device",
-    "  [CRITICAL] 16:47:08 PS.evtx  ScriptBlock: [Convert]::FromBase64String",
-  ].join("\n"),
-  "analyze run":
-    "Starting analysis... Algorithm: ensemble | Threshold: 0.65\nProcessing 284,913 logs...\n████████████████████████████████ 100%\nComplete: 342 anomalies detected in 11.4s",
-  "analyze list": [
-    "Analysis Sessions:",
-    "",
-    "  SES-2024-001  ensemble         84,312 logs  342 anomalies  11.4s",
-    "  SES-2024-002  isolation_forest  51,847 logs  187 anomalies   8.2s",
-    "  SES-2024-003  one_class_svm    29,441 logs   94 anomalies  14.7s",
-    "  SES-2024-004  statistical     119,313 logs 1224 anomalies   9.8s",
-  ].join("\n"),
-  "hub nodes": [
-    "Registered Nodes:",
-    "",
-    "  NODE-001  HUB-PRIMARY   hub       ONLINE   284,913 logs",
-    "  NODE-002  TERMINAL-A1   terminal  ONLINE    84,312 logs",
-    "  NODE-003  TERMINAL-A2   terminal  ONLINE    51,847 logs",
-    "  NODE-004  TERMINAL-B1   terminal  OFFLINE   29,441 logs",
-    "  NODE-005  TERMINAL-B2   terminal  ONLINE   119,313 logs",
-  ].join("\n"),
-  "hub export":
-    "Generating sync package...\nPackage: quorum_sync_20260220_164723.qsp (2.4 MB)\nRSA-PSS signature: VALID ✓\nReady for physical transfer.",
-  "report gen":
-    "Generating PDF report for SES-2024-001...\nReport: threat_analysis_feb20.pdf (1.8 MB)\nDownload ready.",
-  "logs ingest":
-    "Awaiting file input... (In production, use: quorum ingest <filepath>)\nExample: quorum ingest /var/log/auth.log",
-};
-
 const initialLines: TerminalLine[] = [
   {
     id: 0,
     type: "system",
-    text: "╔══════════════════════════════════════════════════════════╗",
+    text: "QUORUM CLI - backend connected",
     timestamp: now(),
   },
   {
     id: 1,
     type: "system",
-    text: "║  QUORUM CLI v2.4.1 — AI-Powered Threat Detection        ║",
-    timestamp: now(),
-  },
-  {
-    id: 2,
-    type: "system",
-    text: "║  Environment: AIR-GAPPED · Node: HUB-PRIMARY            ║",
-    timestamp: now(),
-  },
-  {
-    id: 3,
-    type: "system",
-    text: "╚══════════════════════════════════════════════════════════╝",
-    timestamp: now(),
-  },
-  {
-    id: 4,
-    type: "system",
     text: 'Type "help" for available commands.',
     timestamp: now(),
   },
+];
+
+const cmdList = [
+  { cmd: "status", desc: "System status overview" },
+  { cmd: "scan usb", desc: "Scan USB devices" },
+  { cmd: "scan lan", desc: "Scan LAN nodes" },
+  { cmd: "logs recent", desc: "Show recent log entries" },
+  { cmd: "logs ingest", desc: "Ingest log files" },
+  { cmd: "analyze run", desc: "Run analysis session" },
+  { cmd: "analyze list", desc: "List analysis sessions" },
+  { cmd: "hub nodes", desc: "Show registered nodes" },
+  { cmd: "hub export", desc: "Export sync package" },
+  { cmd: "report gen", desc: "Generate report" },
+  { cmd: "clear", desc: "Clear terminal" },
+  { cmd: "whoami", desc: "Current node info" },
+  { cmd: "uptime", desc: "System uptime" },
+  { cmd: "version", desc: "Quorum version" },
 ];
 
 export default function Terminal() {
@@ -152,9 +73,11 @@ export default function Terminal() {
   const [input, setInput] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [historyIdx, setHistoryIdx] = useState(-1);
+  const [showCmds, setShowCmds] = useState(false);
+  const [busy, setBusy] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  let nextId = useRef(initialLines.length);
+  const nextId = useRef(initialLines.length);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -165,43 +88,185 @@ export default function Terminal() {
     setLines((prev) => [...prev, { id, type, text, timestamp: now() }]);
   }, []);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const executeCommand = async (rawCmd: string): Promise<string> => {
+    const cmd = rawCmd.toLowerCase().trim();
+
+    if (cmd === "help") {
+      return [
+        "Available commands:",
+        ...cmdList.map((c) => `  ${c.cmd.padEnd(13)} - ${c.desc}`),
+      ].join("\n");
+    }
+
+    if (cmd === "status") {
+      const s = await getSystemStatus();
+      return [
+        "QUORUM SYSTEM STATUS",
+        `Environment: ${s.environment}`,
+        `Total Logs: ${s.total_logs.toLocaleString()}`,
+        `Anomalies: ${s.total_anomalies.toLocaleString()}`,
+        `Sessions: ${s.active_sessions}`,
+        `Nodes Online: ${s.nodes_online}`,
+        `Uptime: ${s.uptime_hours} hours`,
+      ].join("\n");
+    }
+
+    if (cmd === "scan usb") {
+      const d = await getDevices();
+      if (d.usb.length === 0) return "No USB devices detected.";
+      return [
+        "USB Devices:",
+        ...d.usb.map(
+          (u) =>
+            `  [${u.id}] ${u.name} - ${u.type} - Risk: ${u.risk} (${u.vid}:${u.pid})`,
+        ),
+      ].join("\n");
+    }
+
+    if (cmd === "scan lan") {
+      const d = await getDevices();
+      if (d.lan.length === 0) return "No LAN nodes detected.";
+      return [
+        "LAN Nodes:",
+        ...d.lan.map(
+          (n) =>
+            `  ${n.ip.padEnd(15)} ${n.hostname.padEnd(18)} ${n.status.padEnd(7)} ${n.risk}`,
+        ),
+      ].join("\n");
+    }
+
+    if (cmd === "logs recent") {
+      const logs = await getLogs(5);
+      if (logs.length === 0) return "No logs available.";
+      return [
+        "Last 5 log entries:",
+        ...logs.map(
+          (l) =>
+            `  [${l.severity}] ${new Date(l.timestamp).toLocaleTimeString("en-US", {
+              hour12: false,
+            })} ${l.source} ${l.message}`,
+        ),
+      ].join("\n");
+    }
+
+    if (cmd === "analyze run") {
+      const result = await runAnalysis({
+        algorithm: "ensemble",
+        threshold: 0.65,
+        log_source: "latest",
+      });
+      return [
+        `Session: ${result.session_id ?? "N/A"}`,
+        `Status: ${result.status ?? "completed"}`,
+        `Logs analyzed: ${(result.logs_analyzed ?? 0).toLocaleString()}`,
+        `Anomalies: ${(result.anomalies_detected ?? 0).toLocaleString()}`,
+        `Duration: ${result.duration_seconds ?? 0}s`,
+      ].join("\n");
+    }
+
+    if (cmd === "analyze list") {
+      const sessions = await getSessions(5);
+      if (sessions.length === 0) return "No analysis sessions found.";
+      return [
+        "Analysis Sessions:",
+        ...sessions.map(
+          (s) =>
+            `  ${s.id} ${s.algorithm.padEnd(15)} ${s.total_logs
+              .toLocaleString()
+              .padStart(8)} logs  ${s.anomalies_found.toString().padStart(5)} anomalies`,
+        ),
+      ].join("\n");
+    }
+
+    if (cmd === "hub nodes") {
+      const nodes = await getNodes();
+      if (nodes.length === 0) return "No nodes registered.";
+      return [
+        "Registered Nodes:",
+        ...nodes.map(
+          (n) =>
+            `  ${n.id} ${n.hostname.padEnd(18)} ${n.role.padEnd(8)} ${n.status} ${n.total_logs.toLocaleString()} logs`,
+        ),
+      ].join("\n");
+    }
+
+    if (cmd === "hub export") {
+      const { filename, blob } = await exportSyncPackage("hub", true);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      return `Sync package exported: ${filename}`;
+    }
+
+    if (cmd === "report gen") {
+      const sessions = await getSessions(1);
+      const sessionId = sessions[0]?.id;
+      const r = await generateReport("PDF", sessionId);
+      return `Report generated: ${r.filename}`;
+    }
+
+    if (cmd === "whoami") {
+      const hub = await getHubInfo();
+      return `${hub.hostname} (${hub.role}) - status: ${hub.status}`;
+    }
+
+    if (cmd === "uptime") {
+      const s = await getSystemStatus();
+      return `System uptime: ${s.uptime_hours} hours`;
+    }
+
+    if (cmd === "version") {
+      const root = await getRootInfo();
+      return `${root.name} v${root.version} - ${root.status}`;
+    }
+
+    if (cmd === "logs ingest") {
+      return "Use the Logs page upload zone to ingest files into backend.";
+    }
+
+    try {
+      const response = await cliService.executeCommand({
+        command: `quorum ${cmd}`,
+      });
+      if (response.exit_code !== 0) {
+        throw new Error(response.error || "Command failed");
+      }
+      return response.output || "Command completed.";
+    } catch {
+      throw new Error(`Command not found: \"${rawCmd}\". Type \"help\" for available commands.`);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const cmd = input.trim();
-    if (!cmd) return;
+    if (!cmd || busy) return;
 
     setHistory((prev) => [cmd, ...prev]);
     setHistoryIdx(-1);
     addLine("input", cmd);
 
-    if (cmd === "clear") {
+    if (cmd.toLowerCase() === "clear") {
       setLines([]);
       setInput("");
       return;
     }
 
-    const response = mockResponses[cmd];
-    if (response) {
-      setTimeout(
-        () =>
-          addLine(
-            "output",
-            typeof response === "string" ? response : response.join("\n"),
-          ),
-        150,
-      );
-    } else {
-      setTimeout(
-        () =>
-          addLine(
-            "error",
-            `Command not found: "${cmd}". Type "help" for available commands.`,
-          ),
-        100,
-      );
+    setBusy(true);
+    try {
+      const output = await executeCommand(cmd);
+      addLine("output", output);
+    } catch (error) {
+      addLine("error", error instanceof Error ? error.message : "Command failed");
+    } finally {
+      setBusy(false);
+      setInput("");
     }
-
-    setInput("");
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -231,33 +296,13 @@ export default function Terminal() {
     }
   };
 
-  const [showCmds, setShowCmds] = useState(false);
-
-  const cmdList = [
-    { cmd: "status", desc: "System status overview" },
-    { cmd: "scan usb", desc: "Scan USB devices" },
-    { cmd: "scan lan", desc: "Scan LAN nodes" },
-    { cmd: "logs recent", desc: "Show recent log entries" },
-    { cmd: "logs ingest", desc: "Ingest log files" },
-    { cmd: "analyze run", desc: "Run analysis session" },
-    { cmd: "analyze list", desc: "List analysis sessions" },
-    { cmd: "hub nodes", desc: "Show registered nodes" },
-    { cmd: "hub export", desc: "Export sync package" },
-    { cmd: "report gen", desc: "Generate report" },
-    { cmd: "clear", desc: "Clear terminal" },
-    { cmd: "whoami", desc: "Current user info" },
-    { cmd: "uptime", desc: "System uptime" },
-    { cmd: "version", desc: "Quorum version" },
-  ];
-
   return (
-    <AppLayout title="Terminal" subtitle="Execute Quorum CLI commands">
+    <AppLayout title="Terminal" subtitle="Execute backend-connected Quorum commands">
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         className="h-[calc(100vh-140px)] flex flex-col gap-3"
       >
-        {/* Collapsible Instructions */}
         <div className="cyber-card overflow-hidden shrink-0">
           <button
             onClick={() => setShowCmds((prev) => !prev)}
@@ -318,7 +363,6 @@ export default function Terminal() {
           className="flex-1 terminal p-0 flex flex-col cursor-text min-h-0"
           onClick={() => inputRef.current?.focus()}
         >
-          {/* Terminal header bar */}
           <div
             className="flex items-center gap-2 px-4 py-2 border-b border-border"
             style={{ background: "hsl(220 30% 6%)" }}
@@ -344,7 +388,6 @@ export default function Terminal() {
             </div>
           </div>
 
-          {/* Output */}
           <div className="flex-1 overflow-y-auto p-4 space-y-0.5">
             {lines.map((line) => (
               <div
@@ -370,7 +413,6 @@ export default function Terminal() {
             <div ref={bottomRef} />
           </div>
 
-          {/* Input */}
           <form
             onSubmit={handleSubmit}
             className="flex items-center gap-2 px-4 py-3 border-t border-border"
@@ -388,9 +430,10 @@ export default function Terminal() {
               autoFocus
               spellCheck={false}
               className="flex-1 bg-transparent outline-none font-mono text-sm text-foreground placeholder:text-muted-foreground caret-cyan-400"
-              placeholder="Enter command..."
+              placeholder={busy ? "Running command..." : "Enter command..."}
+              disabled={busy}
             />
-            <span className="animate-blink text-cyan font-mono">▌</span>
+            <span className="animate-blink text-cyan font-mono">|</span>
           </form>
         </div>
       </motion.div>

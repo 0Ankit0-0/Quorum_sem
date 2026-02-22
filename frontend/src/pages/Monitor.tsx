@@ -1,10 +1,15 @@
-import { useState, useRef, useEffect } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Play, Square, ChevronDown } from "lucide-react";
 import AppLayout from "@/components/layout/AppLayout";
-import { mockStreamLogs } from "@/lib/mockData";
-
-type LogLine = typeof mockStreamLogs[0];
+import { useQuorumData } from "@/hooks/useQuorumData";
+import {
+  type SeverityLevel,
+  type StreamLogData,
+  startRealtimeMonitor,
+  stopRealtimeMonitor,
+} from "@/lib/api-functions";
+import { toast } from "sonner";
 
 const severityColor: Record<string, string> = {
   CRITICAL: "hsl(var(--critical))",
@@ -20,36 +25,40 @@ const severityBg: Record<string, string> = {
   LOW: "",
 };
 
+const normalizeSeverity = (value: unknown): SeverityLevel => {
+  const sev = String(value ?? "").toUpperCase();
+  if (sev === "CRITICAL") return "CRITICAL";
+  if (sev === "HIGH") return "HIGH";
+  if (sev === "MEDIUM") return "MEDIUM";
+  return "LOW";
+};
+
+const formatTime = (iso?: string) => {
+  const d = iso ? new Date(iso) : new Date();
+  return d.toLocaleTimeString("en-US", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    fractionalSecondDigits: 3,
+  });
+};
+
 export default function Monitor() {
+  const { streamLogs } = useQuorumData();
   const [streaming, setStreaming] = useState(false);
-  const [logs, setLogs] = useState<LogLine[]>(mockStreamLogs);
+  const [logs, setLogs] = useState<StreamLogData[]>(streamLogs);
   const [filter, setFilter] = useState("ALL");
   const [autoScroll, setAutoScroll] = useState(true);
+  const [connecting, setConnecting] = useState(false);
   const consoleRef = useRef<HTMLDivElement>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval>>();
-
-  const addRandomLog = () => {
-    const templates = [
-      { severity: "CRITICAL", score: 0.97, source: "WKST-14", message: "4625 - Failed logon attempt [SYSTEM]" },
-      { severity: "HIGH", score: 0.83, source: "SRV-02", message: "4688 - New process: cmd.exe via winlogon" },
-      { severity: "MEDIUM", score: 0.67, source: "WKST-07", message: "4672 - Special privileges assigned" },
-      { severity: "LOW", score: 0.41, source: "SRV-01", message: "7036 - Service state change event" },
-      { severity: "HIGH", score: 0.81, source: "WKST-22", message: "5140 - Network share object accessed" },
-    ];
-    const t = templates[Math.floor(Math.random() * templates.length)];
-    const now = new Date();
-    const time = `${now.getHours().toString().padStart(2,"0")}:${now.getMinutes().toString().padStart(2,"0")}:${now.getSeconds().toString().padStart(2,"0")}.${now.getMilliseconds().toString().padStart(3,"0")}`;
-    setLogs(prev => [...prev.slice(-199), { id: prev.length + 1, time, ...t }]);
-  };
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
-    if (streaming) {
-      intervalRef.current = setInterval(addRandomLog, 600);
-    } else {
-      clearInterval(intervalRef.current);
+    if (!streaming && streamLogs.length > 0) {
+      setLogs(streamLogs);
     }
-    return () => clearInterval(intervalRef.current);
-  }, [streaming]);
+  }, [streamLogs, streaming]);
 
   useEffect(() => {
     if (autoScroll && consoleRef.current) {
@@ -57,24 +66,122 @@ export default function Monitor() {
     }
   }, [logs, autoScroll]);
 
-  const filtered = filter === "ALL" ? logs : logs.filter(l => l.severity === filter);
+  useEffect(() => {
+    return () => {
+      eventSourceRef.current?.close();
+      eventSourceRef.current = null;
+    };
+  }, []);
+
+  const start = async () => {
+    setConnecting(true);
+    try {
+      await startRealtimeMonitor();
+      const base = import.meta.env.VITE_API_URL || "http://localhost:8000";
+      const es = new EventSource(`${base}/stream/logs`);
+
+      es.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data) as {
+            event?: string;
+            message?: string;
+            parsed?: Record<string, unknown>;
+            anomaly_score?: number;
+            severity?: string;
+            received_at?: string;
+            raw_line?: string;
+          };
+
+          if (data.event === "connected") {
+            return;
+          }
+
+          const next: StreamLogData = {
+            id: Date.now(),
+            time: formatTime(data.received_at),
+            severity: normalizeSeverity(data.severity),
+            score: Number(data.anomaly_score ?? 0.4),
+            source: String(
+              data.parsed?.source ?? data.parsed?.source_file ?? "STREAM",
+            ).toUpperCase(),
+            message: String(data.parsed?.message ?? data.raw_line ?? ""),
+          };
+
+          setLogs((prev) => [...prev.slice(-199), next]);
+        } catch {
+          // Ignore malformed stream messages
+        }
+      };
+
+      es.onerror = () => {
+        toast.error("Stream disconnected");
+        setStreaming(false);
+        es.close();
+        eventSourceRef.current = null;
+      };
+
+      eventSourceRef.current = es;
+      setStreaming(true);
+      toast.success("Live stream started");
+    } catch (error) {
+      console.error("Failed to start stream", error);
+      toast.error("Failed to start stream");
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const stop = async () => {
+    try {
+      eventSourceRef.current?.close();
+      eventSourceRef.current = null;
+      await stopRealtimeMonitor();
+      setStreaming(false);
+      toast.success("Live stream stopped");
+    } catch (error) {
+      console.error("Failed to stop stream", error);
+      toast.error("Failed to stop stream");
+    }
+  };
+
+  const filtered = useMemo(
+    () => (filter === "ALL" ? logs : logs.filter((l) => l.severity === filter)),
+    [filter, logs],
+  );
 
   return (
     <AppLayout title="Real-Time Monitor" subtitle="Live log stream with AI scoring">
       <div className="space-y-4">
-        {/* Controls */}
         <div className="cyber-card p-4 flex flex-wrap items-center gap-4">
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setStreaming(!streaming)}
-              className="flex items-center gap-2 px-4 py-2 rounded-md text-sm font-semibold transition-all duration-200"
+              onClick={() => (streaming ? void stop() : void start())}
+              disabled={connecting}
+              className="flex items-center gap-2 px-4 py-2 rounded-md text-sm font-semibold transition-all duration-200 disabled:opacity-50"
               style={
                 streaming
-                  ? { background: "hsl(var(--critical) / 0.15)", color: "hsl(var(--critical))", border: "1px solid hsl(var(--critical) / 0.3)" }
-                  : { background: "hsl(var(--cyan) / 0.15)", color: "hsl(var(--cyan))", border: "1px solid hsl(var(--cyan) / 0.3)" }
+                  ? {
+                      background: "hsl(var(--critical) / 0.15)",
+                      color: "hsl(var(--critical))",
+                      border: "1px solid hsl(var(--critical) / 0.3)",
+                    }
+                  : {
+                      background: "hsl(var(--cyan) / 0.15)",
+                      color: "hsl(var(--cyan))",
+                      border: "1px solid hsl(var(--cyan) / 0.3)",
+                    }
               }
             >
-              {streaming ? <><Square className="w-3.5 h-3.5" />Stop Stream</> : <><Play className="w-3.5 h-3.5" />Start Stream</>}
+              {streaming ? (
+                <>
+                  <Square className="w-3.5 h-3.5" />Stop Stream
+                </>
+              ) : (
+                <>
+                  <Play className="w-3.5 h-3.5" />
+                  {connecting ? "Connecting..." : "Start Stream"}
+                </>
+              )}
             </button>
 
             {streaming && (
@@ -87,15 +194,22 @@ export default function Monitor() {
 
           <div className="flex items-center gap-2 ml-auto">
             <span className="text-xs text-muted-foreground">Filter:</span>
-            {["ALL", "CRITICAL", "HIGH", "MEDIUM", "LOW"].map(f => (
+            {["ALL", "CRITICAL", "HIGH", "MEDIUM", "LOW"].map((f) => (
               <button
                 key={f}
                 onClick={() => setFilter(f)}
                 className="px-2.5 py-1 rounded text-xs font-mono font-semibold transition-colors"
                 style={
                   filter === f
-                    ? { background: "hsl(var(--cyan) / 0.15)", color: "hsl(var(--cyan))", border: "1px solid hsl(var(--cyan) / 0.3)" }
-                    : { color: "hsl(var(--muted-foreground))", border: "1px solid transparent" }
+                    ? {
+                        background: "hsl(var(--cyan) / 0.15)",
+                        color: "hsl(var(--cyan))",
+                        border: "1px solid hsl(var(--cyan) / 0.3)",
+                      }
+                    : {
+                        color: "hsl(var(--muted-foreground))",
+                        border: "1px solid transparent",
+                      }
                 }
               >
                 {f}
@@ -112,14 +226,19 @@ export default function Monitor() {
           </button>
         </div>
 
-        {/* Terminal Console */}
         <div className="terminal" style={{ height: "calc(100vh - 280px)" }}>
-          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/30" style={{ background: "hsl(0 0% 6%)" }}>
+          <div
+            className="flex items-center gap-2 px-4 py-2.5 border-b border-border/30"
+            style={{ background: "hsl(0 0% 6%)" }}
+          >
             <div className="w-2.5 h-2.5 rounded-full bg-cyber-critical" />
             <div className="w-2.5 h-2.5 rounded-full bg-cyber-medium" />
             <div className="w-2.5 h-2.5 rounded-full bg-cyber-low" />
-            <span className="ml-2 text-xs text-muted-foreground font-mono">quorum://stream/logs — {filtered.length} events</span>
+            <span className="ml-2 text-xs text-muted-foreground font-mono">
+              quorum://stream/logs - {filtered.length} events
+            </span>
           </div>
+
           <div ref={consoleRef} className="overflow-y-auto h-full p-3 space-y-0.5">
             <AnimatePresence initial={false}>
               {filtered.map((log) => (
@@ -130,23 +249,38 @@ export default function Monitor() {
                   className="flex items-start gap-3 px-2 py-1 rounded text-xs font-mono group"
                   style={{ background: severityBg[log.severity] || "transparent" }}
                 >
-                  <span className="text-muted-foreground shrink-0 select-none">{log.time}</span>
-                  <span className="shrink-0 w-16 text-center rounded px-1" style={{ color: severityColor[log.severity], background: `${severityColor[log.severity]}20` }}>
+                  <span className="text-muted-foreground shrink-0 select-none">
+                    {log.time}
+                  </span>
+                  <span
+                    className="shrink-0 w-16 text-center rounded px-1"
+                    style={{
+                      color: severityColor[log.severity],
+                      background: `${severityColor[log.severity]}20`,
+                    }}
+                  >
                     {log.severity}
                   </span>
-                  <span className="shrink-0 w-14 text-cyan">{log.source}</span>
-                  <span className="shrink-0 w-12 text-right" style={{ color: log.score > 0.9 ? "hsl(var(--critical))" : log.score > 0.75 ? "hsl(var(--high))" : log.score > 0.55 ? "hsl(var(--medium))" : "hsl(var(--low))" }}>
+                  <span className="shrink-0 w-20 text-cyan truncate">{log.source}</span>
+                  <span
+                    className="shrink-0 w-12 text-right"
+                    style={{
+                      color:
+                        log.score > 0.9
+                          ? "hsl(var(--critical))"
+                          : log.score > 0.75
+                            ? "hsl(var(--high))"
+                            : log.score > 0.55
+                              ? "hsl(var(--medium))"
+                              : "hsl(var(--low))",
+                    }}
+                  >
                     {log.score.toFixed(2)}
                   </span>
                   <span className="text-foreground/80 flex-1">{log.message}</span>
                 </motion.div>
               ))}
             </AnimatePresence>
-            {streaming && (
-              <div className="flex items-center gap-2 px-2 py-1 text-xs font-mono text-muted-foreground">
-                <span className="animate-blink">█</span>
-              </div>
-            )}
           </div>
         </div>
       </div>

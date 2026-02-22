@@ -1,4 +1,4 @@
-import { Bell, RefreshCw, Search, Wifi, WifiOff } from "lucide-react";
+import { Bell, RefreshCw, WifiOff } from "lucide-react";
 import { useState } from "react";
 
 interface HeaderProps {

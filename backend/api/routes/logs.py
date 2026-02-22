@@ -172,10 +172,22 @@ async def get_recent_logs(limit: int = 100):
         from core.database import db
         
         query = """
-            SELECT id, timestamp, source, event_type, severity, 
-                   message, hostname, username
-            FROM logs
-            ORDER BY timestamp DESC
+            SELECT
+                l.id,
+                l.timestamp,
+                l.source,
+                l.event_type,
+                COALESCE(a.severity, l.severity, 'LOW') AS severity,
+                l.message,
+                l.hostname,
+                l.username,
+                COALESCE(a.algorithm, 'statistical') AS algorithm,
+                a.mitre_technique_id,
+                a.mitre_tactic,
+                a.anomaly_score
+            FROM logs l
+            LEFT JOIN anomalies a ON a.log_id = l.id
+            ORDER BY l.timestamp DESC
             LIMIT ?
         """
         
