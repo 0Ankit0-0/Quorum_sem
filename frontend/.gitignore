@@ -13,6 +13,7 @@ dist-ssr
 *.local
 
 kombai/*
+kombai/resources/*
 qodo/*
 
 # Editor directories and files
