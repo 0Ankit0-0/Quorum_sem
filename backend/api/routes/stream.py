@@ -100,12 +100,27 @@ async def stream_status():
 async def start_stream(files: Optional[list] = None):
     """Start the real-time monitor with specified files"""
     from core.realtime_monitor import realtime_monitor
+    from config.settings import settings
 
     added = []
-    if files:
-        for f in files:
-            if realtime_monitor.add_file(f):
-                added.append(f)
+    candidate_files = files or []
+
+    if not candidate_files:
+        upload_dir = settings.DATA_DIR / "uploads"
+        if upload_dir.exists():
+            candidate_files = [
+                str(p)
+                for p in sorted(
+                    upload_dir.glob("*"),
+                    key=lambda item: item.stat().st_mtime,
+                    reverse=True,
+                )
+                if p.is_file() and p.suffix.lower() in {".log", ".txt", ".syslog"}
+            ][:5]
+
+    for f in candidate_files:
+        if realtime_monitor.add_file(f):
+            added.append(f)
 
     if not realtime_monitor.is_running():
         realtime_monitor.start()

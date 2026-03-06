@@ -1,0 +1,15 @@
+2026-02-23 10:15:32 INFO     system        Service started successfully (pid=2145)
+2026-02-23 10:15:35 WARNING  disk          Disk usage at 82% on /dev/sda1
+2026-02-23 10:16:02 INFO     auth          User login successful: username=ankit ip=192.168.1.25
+2026-02-23 10:16:45 ERROR    auth          Failed login attempt: username=admin ip=203.0.113.45
+2026-02-23 10:17:10 INFO     webserver     GET /index.html 200 1245ms ip=192.168.1.25
+2026-02-23 10:17:12 INFO     webserver     POST /api/upload 201 532ms ip=192.168.1.30
+2026-02-23 10:17:45 ERROR    database      Connection timeout to db-server:5432
+2026-02-23 10:18:01 INFO     scheduler     Scheduled job 'backup' started
+2026-02-23 10:18:22 INFO     scheduler     Scheduled job 'backup' completed successfully
+2026-02-23 10:19:03 CRITICAL security      Multiple failed login attempts detected from ip=203.0.113.45
+2026-02-23 10:19:45 INFO     system        CPU usage normal (45%)
+2026-02-23 10:20:12 WARNING  memory        High memory usage detected (78%)
+2026-02-23 10:21:00 INFO     auth          User logout: username=ankit ip=192.168.1.25
+2026-02-23 10:21:30 ERROR    application   NullPointerException at module=payment_processor line=214
+2026-02-23 10:22:10 INFO     system        Service stopped gracefully

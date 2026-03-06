@@ -5,6 +5,9 @@ export interface UploadedFile {
   size_bytes: number;
   uploaded_at: string;
   path: string;
+  dataset_id?: string | null;
+  record_count?: number;
+  db_path?: string | null;
 }
 
 export interface UploadedFilesResponse {
@@ -189,6 +192,62 @@ export interface HubInfo {
   hostname: string;
   role: string;
   status: string;
+}
+
+export interface MonitoringSample {
+  timestamp: string;
+  cpu_percent: number;
+  memory_percent: number;
+  memory_used_bytes: number;
+  memory_total_bytes: number;
+  disk_read_bps: number;
+  disk_write_bps: number;
+  network_recv_bps: number;
+  network_send_bps: number;
+}
+
+export interface MonitoringDeviceEvent {
+  timestamp: string;
+  device_name: string;
+  event: string;
+  device_class: string;
+}
+
+export interface MonitoringSnapshot {
+  status: {
+    running: boolean;
+    started_at?: string | null;
+    last_sample_at?: string | null;
+    samples: number;
+  };
+  samples: MonitoringSample[];
+  device_events: MonitoringDeviceEvent[];
+}
+
+export interface DeviceEvent {
+  device_id: string;
+  name: string;
+  device_class: string;
+  connected_at?: string | null;
+  removed_at?: string | null;
+  duration_seconds?: number | null;
+  event: string;
+  risk_level?: string | null;
+}
+
+export interface StorageStatus {
+  quota_bytes: number;
+  used_bytes: number;
+  usage_by_category: Record<string, number>;
+  utilization_percent: number;
+  alert_level: "normal" | "warning" | "critical";
+  cleanup_suggestions: string[];
+}
+
+export interface EncryptionConfig {
+  signature_algorithm: string;
+  hash_algorithm: string;
+  key_rotation_days: number;
 }
 
 const SEVERITY_COLORS: Record<SeverityLevel, string> = {
@@ -443,9 +502,13 @@ export const getAnomalies = async (limit = 10): Promise<AnomalyData[]> => {
   }));
 };
 
-export const getLogs = async (limit = 50): Promise<LogData[]> => {
+export const getLogs = async (
+  limit = 50,
+  filename?: string,
+  search?: string,
+): Promise<LogData[]> => {
   const response = await apiClient.get<BackendLog[]>("/logs/recent", {
-    params: { limit },
+    params: { limit, filename, search },
   });
   return (response.data ?? []).map((item, index) => ({
     id: `LOG-${String(item.id ?? index + 1).padStart(4, "0")}`,
@@ -495,7 +558,55 @@ export const getDevices = async (): Promise<DevicesData> => {
       status?: string;
       risk_level?: string;
     }>;
-  }>("/devices/scan", { params: { include_lan: true } });
+  }>("/devices/scan", { params: { include_lan: false } });
+
+  return {
+    usb: (response.data.usb_devices ?? []).map((item, index) => ({
+      id: String(item.device_id ?? `USB-${String(index + 1).padStart(3, "0")}`),
+      name: String(item.name ?? "Unknown Device"),
+      vid: String(item.vendor_id ?? "0000"),
+      pid: String(item.product_id ?? "0000"),
+      type: String(item.device_class ?? "UNKNOWN").replaceAll("_", " "),
+      risk: normalizeSeverity(item.risk_level),
+      inserted_at: toIsoString(item.connected_at),
+      is_new: Boolean(item.is_new),
+    })),
+    lan: (response.data.lan_nodes ?? []).map((item, index) => ({
+      id: String(item.device_id ?? `LAN-${String(index + 1).padStart(3, "0")}`),
+      ip: String(item.ip_address ?? "0.0.0.0"),
+      hostname: String(item.hostname ?? "UNKNOWN"),
+      mac: String(item.mac_address ?? "unknown"),
+      os: String(item.os_info ?? "UNKNOWN"),
+      status: String(item.status ?? "").toLowerCase().includes("active")
+        ? "ONLINE"
+        : "OFFLINE",
+      risk: normalizeSeverity(item.risk_level),
+    })),
+  };
+};
+
+export const getDevicesScan = async (includeLan = true): Promise<DevicesData> => {
+  const response = await apiClient.get<{
+    usb_devices?: Array<{
+      device_id?: string;
+      name?: string;
+      vendor_id?: string;
+      product_id?: string;
+      device_class?: string;
+      risk_level?: string;
+      connected_at?: string;
+      is_new?: boolean;
+    }>;
+    lan_nodes?: Array<{
+      device_id?: string;
+      ip_address?: string;
+      hostname?: string;
+      mac_address?: string;
+      os_info?: string;
+      status?: string;
+      risk_level?: string;
+    }>;
+  }>("/devices/scan", { params: { include_lan: includeLan } });
 
   return {
     usb: (response.data.usb_devices ?? []).map((item, index) => ({
@@ -705,6 +816,133 @@ export const startRealtimeMonitor = async (): Promise<{ status: string }> => {
 
 export const stopRealtimeMonitor = async (): Promise<{ status: string }> => {
   const response = await apiClient.post<{ status: string }>("/stream/stop");
+  return response.data;
+};
+
+export const startSystemMonitoring = async (): Promise<{ status: string }> => {
+  const response = await apiClient.post<{ status: string }>("/monitor/start");
+  return response.data;
+};
+
+export const stopSystemMonitoring = async (): Promise<{ status: string }> => {
+  const response = await apiClient.post<{ status: string }>("/monitor/stop");
+  return response.data;
+};
+
+export const getSystemMonitoringStatus = async (): Promise<{
+  running: boolean;
+  started_at?: string | null;
+  last_sample_at?: string | null;
+  samples: number;
+}> => {
+  const response = await apiClient.get("/monitor/status");
+  return response.data;
+};
+
+export const getSystemMonitoringSnapshot = async (
+  limit = 120,
+): Promise<MonitoringSnapshot> => {
+  const response = await apiClient.get<MonitoringSnapshot>("/monitor/snapshot", {
+    params: { limit },
+  });
+  return response.data;
+};
+
+export const getDeviceEvents = async (limit = 100): Promise<DeviceEvent[]> => {
+  const response = await apiClient.get<{ events: DeviceEvent[] }>(
+    "/devices/events",
+    { params: { limit } },
+  );
+  return response.data.events ?? [];
+};
+
+export const listDatasets = async () => {
+  const response = await apiClient.get<{ datasets: UploadedFile[] }>("/logs/datasets");
+  return response.data.datasets ?? [];
+};
+
+export const generateDatasetReport = async (filename: string) => {
+  const response = await apiClient.post(`/reports/datasets/${encodeURIComponent(filename)}/generate`);
+  return response.data;
+};
+
+export const listDatasetReports = async (filename: string) => {
+  const response = await apiClient.get<{ reports: Array<Record<string, unknown>> }>(
+    `/reports/datasets/${encodeURIComponent(filename)}`,
+  );
+  return response.data.reports ?? [];
+};
+
+export const downloadDatasetReportFile = async (
+  filename: string,
+  reportId: string,
+  file = "summary.json",
+): Promise<Blob> => {
+  const response = await apiClient.get(
+    `/reports/datasets/${encodeURIComponent(filename)}/${encodeURIComponent(reportId)}/download`,
+    { params: { file }, responseType: "blob" },
+  );
+  return response.data;
+};
+
+export const downloadDatasetReportZip = async (
+  filename: string,
+  reportId: string,
+): Promise<{ blob: Blob; hash: string }> => {
+  const response = await apiClient.get(
+    `/reports/datasets/${encodeURIComponent(filename)}/${encodeURIComponent(reportId)}/download-all`,
+    { responseType: "blob" },
+  );
+  return {
+    blob: response.data,
+    hash: String(response.headers["x-integrity-sha256"] ?? ""),
+  };
+};
+
+export const getStorageStatus = async (): Promise<StorageStatus> => {
+  const response = await apiClient.get<StorageStatus>("/system/storage");
+  return response.data;
+};
+
+export const updateStorageQuota = async (maxGb: number): Promise<StorageStatus> => {
+  const response = await apiClient.post<StorageStatus>("/system/storage/quota", null, {
+    params: { max_gb: maxGb },
+  });
+  return response.data;
+};
+
+export const getEncryptionConfig = async (): Promise<EncryptionConfig> => {
+  const response = await apiClient.get<EncryptionConfig>("/system/encryption");
+  return response.data;
+};
+
+export const updateEncryptionConfig = async (
+  payload: Partial<EncryptionConfig>,
+): Promise<EncryptionConfig> => {
+  const response = await apiClient.post<EncryptionConfig>("/system/encryption", payload);
+  return response.data;
+};
+
+export const exportSystemLog = async (
+  passphrase: string,
+  encrypt = false,
+): Promise<{
+  filename: string;
+  path: string;
+  sha256: string;
+  encrypted: boolean;
+  size_bytes: number;
+}> => {
+  const response = await apiClient.post("/system/logs/export", null, {
+    params: { passphrase, encrypt },
+  });
+  return response.data;
+};
+
+export const downloadExportedSystemLog = async (filename: string): Promise<Blob> => {
+  const response = await apiClient.get(`/system/logs/export/${encodeURIComponent(filename)}`, {
+    responseType: "blob",
+  });
   return response.data;
 };
 

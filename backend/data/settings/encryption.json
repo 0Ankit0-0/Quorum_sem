@@ -1,0 +1,5 @@
+{
+  "signature_algorithm": "RSA-PSS-4096",
+  "hash_algorithm": "SHA-256",
+  "key_rotation_days": 90
+}

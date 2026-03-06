@@ -232,6 +232,28 @@ class DatabaseManager:
                     )
                 """)
 
+            # Device event history
+            if not self._table_exists('device_log'):
+                self.connection.execute("""
+                    CREATE TABLE device_log (
+                        device_id VARCHAR NOT NULL,
+                        device_class VARCHAR,
+                        name VARCHAR,
+                        vendor_id VARCHAR,
+                        product_id VARCHAR,
+                        serial VARCHAR,
+                        mount_point VARCHAR,
+                        ip_address VARCHAR,
+                        mac_address VARCHAR,
+                        connected_at TIMESTAMP,
+                        removed_at TIMESTAMP,
+                        duration_seconds DOUBLE,
+                        event VARCHAR,
+                        risk_level VARCHAR,
+                        metadata JSON
+                    )
+                """)
+
             self._create_index("""
                 CREATE INDEX idx_node_registry_last_seen
                 ON node_registry(last_seen)
@@ -250,6 +272,16 @@ class DatabaseManager:
             self._create_index("""
                 CREATE UNIQUE INDEX idx_hub_anomalies_original_source
                 ON hub_anomalies(original_id, source_node)
+            """)
+
+            self._create_index("""
+                CREATE INDEX idx_device_log_connected_at
+                ON device_log(connected_at)
+            """)
+
+            self._create_index("""
+                CREATE INDEX idx_device_log_device_id
+                ON device_log(device_id)
             """)
             
             logger.info("Database schema created successfully")

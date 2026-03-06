@@ -572,19 +572,64 @@ class DeviceMonitor:
         try:
             from core.database import db
             import json
-            db.execute(
-                "INSERT INTO device_log (device_id, device_class, name, vendor_id, "
-                "product_id, serial, mount_point, ip_address, mac_address, "
-                "connected_at, event, risk_level, metadata) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    device.device_id, device.device_class.value, device.name,
-                    device.vendor_id, device.product_id, device.serial,
-                    device.mount_point, device.ip_address, device.mac_address,
-                    device.connected_at or datetime.utcnow(), event,
-                    device.risk_level, json.dumps(device.metadata)
-                )
+            from services.monitoring_service import monitoring_service
+
+            monitoring_service.register_device_event(
+                device_name=device.name,
+                event=event,
+                device_class=device.device_class.value,
             )
+
+            if event == 'connected':
+                db.execute(
+                    "INSERT INTO device_log (device_id, device_class, name, vendor_id, "
+                    "product_id, serial, mount_point, ip_address, mac_address, "
+                    "connected_at, removed_at, duration_seconds, event, risk_level, metadata) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        device.device_id, device.device_class.value, device.name,
+                        device.vendor_id, device.product_id, device.serial,
+                        device.mount_point, device.ip_address, device.mac_address,
+                        device.connected_at or datetime.utcnow(), None, None, event,
+                        device.risk_level, json.dumps(device.metadata)
+                    )
+                )
+            elif event == 'disconnected':
+                row = db.fetch_one(
+                    """
+                    SELECT connected_at
+                    FROM device_log
+                    WHERE device_id = ? AND event = 'connected'
+                    ORDER BY connected_at DESC
+                    LIMIT 1
+                    """,
+                    (device.device_id,),
+                )
+                removed_at = datetime.utcnow()
+                duration = None
+                if row and row.get("connected_at"):
+                    try:
+                        connected_at = row["connected_at"]
+                        duration = round((removed_at - connected_at).total_seconds(), 2)
+                    except Exception:
+                        duration = None
+                db.execute(
+                    "INSERT INTO device_log (device_id, device_class, name, vendor_id, "
+                    "product_id, serial, mount_point, ip_address, mac_address, "
+                    "connected_at, removed_at, duration_seconds, event, risk_level, metadata) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        device.device_id, device.device_class.value, device.name,
+                        device.vendor_id, device.product_id, device.serial,
+                        device.mount_point, device.ip_address, device.mac_address,
+                        row.get("connected_at") if row else None,
+                        removed_at,
+                        duration,
+                        event,
+                        device.risk_level,
+                        json.dumps(device.metadata),
+                    )
+                )
         except Exception as e:
             logger.debug(f"Device persist error: {e}")
 

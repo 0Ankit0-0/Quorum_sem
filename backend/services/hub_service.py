@@ -171,7 +171,7 @@ class HubService:
             try:
                 import base64
                 from core.security import CryptoUtils
-                payload_bytes = json.dumps(package_dict).encode()
+                payload_bytes = json.dumps(package_dict, default=str).encode()
                 with open(settings.KEYS_DIR / 'private_key.pem', 'rb') as f:
                     priv = f.read()
                 sig = CryptoUtils.sign_data(priv, payload_bytes)

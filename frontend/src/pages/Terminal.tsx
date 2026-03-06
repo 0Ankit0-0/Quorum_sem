@@ -151,7 +151,7 @@ export default function Terminal() {
 
     if (cmd === "analyze run") {
       const result = await runAnalysis({
-        algorithm: "ensemble",
+        algorithm: "auto",
         threshold: 0.65,
         log_source: "latest",
       });

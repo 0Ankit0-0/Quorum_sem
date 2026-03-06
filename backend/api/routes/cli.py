@@ -5,11 +5,11 @@ Provides API endpoints for CLI command execution and documentation
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
-import subprocess
 import shlex
 from datetime import datetime
 
 from config.logging_config import get_logger
+from services.command_registry import command_registry
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/cli", tags=["CLI"])
@@ -204,7 +204,20 @@ async def get_all_commands() -> Dict[str, List[CommandDocumentation]]:
         Dictionary of commands organized by category
     """
     try:
-        return CLI_COMMANDS_DOC
+        dynamic = command_registry.list_commands()
+        payload = {
+            "terminal": [
+                {
+                    "command": name,
+                    "description": desc,
+                    "usage": name,
+                    "examples": [name],
+                    "category": "Terminal",
+                }
+                for name, desc in dynamic.items()
+            ]
+        }
+        return payload
     except Exception as e:
         logger.error(f"Failed to retrieve command documentation: {e}")
         raise HTTPException(
@@ -264,47 +277,23 @@ async def execute_command(request: CommandRequest) -> CommandResponse:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Command cannot be empty"
             )
+        if command_tokens[0] == "quorum":
+            command_text = " ".join(command_tokens[1:] + (request.args or []))
+        else:
+            command_text = " ".join(command_tokens + (request.args or []))
 
-        # Validate command starts with 'quorum'
-        if command_tokens[0] != "quorum":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only 'quorum' commands are allowed"
-            )
-        
-        # Build the full command
-        full_command = command_tokens + (request.args or [])
-        
-        logger.info(f"Executing command: {' '.join(full_command)}")
-        
-        # Execute the command
-        result = subprocess.run(
-            full_command,
-            capture_output=True,
-            text=True,
-            timeout=30  # 30 second timeout
-        )
-        
+        logger.info(f"Executing virtual command: {command_text}")
+        result = command_registry.execute(command_text)
+
         return CommandResponse(
-            command=' '.join(full_command),
-            output=result.stdout,
-            error=result.stderr if result.stderr else None,
-            exit_code=result.returncode,
+            command=command_text,
+            output=result.output,
+            error=result.error,
+            exit_code=result.exit_code,
             executed_at=datetime.now()
         )
-        
-    except subprocess.TimeoutExpired:
-        logger.error(f"Command execution timed out: {request.command}")
-        raise HTTPException(
-            status_code=status.HTTP_408_REQUEST_TIMEOUT,
-            detail="Command execution timed out"
-        )
-    except FileNotFoundError:
-        logger.error(f"Command not found: {request.command}")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Command not found. Is Quorum CLI installed?"
-        )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Command execution failed: {e}")
         raise HTTPException(

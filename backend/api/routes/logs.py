@@ -9,11 +9,23 @@ from datetime import datetime
 
 from models.schemas import LogIngestRequest, LogEntryResponse
 from services.log_service import log_service
+from services.dataset_service import dataset_service
 from config.settings import settings
 from config.logging_config import get_logger
+from core.exceptions import ParserError
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/logs", tags=["Logs"])
+DISALLOWED_UPLOAD_SUFFIXES = {
+    ".exe",
+    ".dll",
+    ".bat",
+    ".cmd",
+    ".com",
+    ".msi",
+    ".ps1",
+    ".sh",
+}
 
 
 @router.post("/ingest")
@@ -41,6 +53,12 @@ async def ingest_log_file(
             upload_dir = settings.DATA_DIR / "uploads"
             upload_dir.mkdir(parents=True, exist_ok=True)
             safe_name = Path(file.filename).name
+            suffix = Path(safe_name).suffix.lower()
+            if suffix in DISALLOWED_UPLOAD_SUFFIXES:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Unsupported file type for log ingestion: {suffix}",
+                )
             saved_path = upload_dir / safe_name
 
             try:
@@ -48,12 +66,15 @@ async def ingest_log_file(
                     shutil.copyfileobj(file.file, buffer)
 
                 stats = log_service.ingest_file(saved_path, source_type)
+                dataset_info = dataset_service.ingest_uploaded_file(saved_path, source_type)
                 
                 # Return stats with the filename preserved
                 return {
                     **stats,
                     "filename": safe_name,
-                    "saved_path": str(saved_path)
+                    "saved_path": str(saved_path),
+                    "dataset_id": dataset_info["dataset_id"],
+                    "dataset_records": dataset_info["records_total"],
                 }
             finally:
                 try:
@@ -89,6 +110,20 @@ async def ingest_log_file(
             detail="Provide either multipart file upload field 'file' or JSON body with 'file_path'"
         )
     
+    except HTTPException:
+        raise
+    except ParserError as e:
+        logger.error(f"Ingestion request failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(e)
+        )
+    except ValueError as e:
+        logger.error(f"Ingestion request failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(e)
+        )
     except Exception as e:
         logger.error(f"Ingestion request failed: {e}")
         raise HTTPException(
@@ -166,9 +201,12 @@ async def get_log_statistics():
 
 
 @router.get("/recent", response_model=list)
-async def get_recent_logs(limit: int = 100):
+async def get_recent_logs(limit: int = 100, filename: Optional[str] = None, search: Optional[str] = None):
     """Get most recent log entries"""
     try:
+        if filename:
+            return dataset_service.fetch_recent_logs(filename=filename, limit=limit, search=search)
+
         from core.database import db
         
         query = """
@@ -223,10 +261,27 @@ async def list_uploaded_files():
         # Sort by upload time (most recent first)
         files.sort(key=lambda x: x["uploaded_at"], reverse=True)
         
-        return {
-            "files": files,
-            "count": len(files)
+        dataset_index = {
+            item["filename"]: item
+            for item in dataset_service.list_datasets()
         }
+        enriched = []
+        for item in files:
+            dataset = dataset_index.get(item["filename"])
+            if dataset is None:
+                ensured = dataset_service.ensure_dataset_for_filename(item["filename"])
+                if ensured:
+                    dataset = dataset_service.get_dataset_by_filename(item["filename"])
+            enriched.append(
+                {
+                    **item,
+                    "dataset_id": dataset.get("dataset_id") if dataset else None,
+                    "record_count": dataset.get("record_count") if dataset else 0,
+                    "db_path": dataset.get("db_path") if dataset else None,
+                }
+            )
+
+        return {"files": enriched, "count": len(enriched)}
     
     except Exception as e:
         logger.error(f"Failed to list uploaded files: {e}")
@@ -234,6 +289,12 @@ async def list_uploaded_files():
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
         )
+
+
+@router.get("/datasets")
+async def list_datasets():
+    """List dataset databases derived from uploaded files."""
+    return {"datasets": dataset_service.list_datasets()}
 
 
 @router.delete("/")

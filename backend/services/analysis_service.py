@@ -49,8 +49,9 @@ class AnalysisService:
         logger.info(f"Starting analysis session {session_id} | algorithm={algorithm}")
 
         try:
+            requested_algorithm = str(algorithm or "ensemble").lower()
             self._create_session(
-                session_id, algorithm, start_time, end_time, threshold, log_source
+                session_id, requested_algorithm, start_time, end_time, threshold, log_source
             )
 
             logs_data = self._load_logs(start_time, end_time, log_source)
@@ -64,7 +65,17 @@ class AnalysisService:
                     "message": "No logs found in specified range",
                 }
 
-            logger.info(f"Loaded {total_logs:,} logs for analysis")
+            resolved_algorithm = self._resolve_algorithm(
+                requested_algorithm=requested_algorithm,
+                total_logs=total_logs,
+            )
+
+            logger.info(
+                "Loaded %s logs for analysis (requested=%s, resolved=%s)",
+                f"{total_logs:,}",
+                requested_algorithm,
+                resolved_algorithm,
+            )
 
             from ai_engine.ensemble import EnsembleDetector
             from ai_engine.feature_extractor import FeatureExtractor
@@ -105,7 +116,7 @@ class AnalysisService:
                 timer.start("detection")
                 predictions, anomaly_scores = detector.detect(
                     features,
-                    algorithm=algorithm,
+                    algorithm=resolved_algorithm,
                     contamination=contamination,
                     raw_logs=chunk,
                     force_retrain=force_retrain,
@@ -121,7 +132,7 @@ class AnalysisService:
                         predictions=predictions,
                         anomaly_scores=anomaly_scores,
                         threshold=threshold,
-                        algorithm=algorithm,
+                        algorithm=resolved_algorithm,
                         feature_extractor=feature_extractor,
                     )
                 )
@@ -153,7 +164,7 @@ class AnalysisService:
                 anomalies=anomalies,
                 session_id=session_id,
                 total_logs_analyzed=total_logs,
-                algorithm=algorithm,
+                algorithm=resolved_algorithm,
                 parameters={"threshold": threshold, "contamination": contamination},
                 analysis_duration_seconds=duration,
             )
@@ -177,7 +188,8 @@ class AnalysisService:
                 "logs_analyzed": total_logs,
                 "anomalies_detected": len(anomalies),
                 "duration_seconds": round(duration, 2),
-                "algorithm": algorithm,
+                "algorithm": resolved_algorithm,
+                "requested_algorithm": requested_algorithm,
                 "threshold": threshold,
                 "log_source": log_source,
                 "summary": summary,
@@ -222,44 +234,80 @@ class AnalysisService:
         log_source: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         try:
-            conditions = []
-            params: List[Any] = []
+            base_conditions = []
+            base_params: List[Any] = []
 
             if start_time:
-                conditions.append("timestamp >= ?")
-                params.append(start_time)
+                base_conditions.append("timestamp >= ?")
+                base_params.append(start_time)
             if end_time:
-                conditions.append("timestamp <= ?")
-                params.append(end_time)
-            if log_source and log_source.lower() not in {"all", "latest"}:
-                conditions.append("source = ?")
-                params.append(log_source)
-            elif log_source and log_source.lower() == "latest":
+                base_conditions.append("timestamp <= ?")
+                base_params.append(end_time)
+
+            def fetch_with_optional_source(source_filter: Optional[str] = None):
+                conditions = list(base_conditions)
+                params = list(base_params)
+                if source_filter:
+                    conditions.append("source = ?")
+                    params.append(source_filter)
+
+                where_clause = " AND ".join(conditions) if conditions else "1=1"
+                query = f"""
+                    SELECT
+                        id, timestamp, source, event_id, event_type,
+                        severity, message, hostname, username,
+                        process_name, process_id
+                    FROM logs
+                    WHERE {where_clause}
+                    ORDER BY timestamp
+                """
+                return db.fetch_all(query, tuple(params) if params else None)
+
+            normalized_source = (log_source or "").strip().lower()
+
+            if normalized_source == "latest":
                 latest = db.fetch_one(
                     "SELECT source FROM logs ORDER BY ingestion_time DESC LIMIT 1"
                 )
                 latest_source = latest.get("source") if latest else None
                 if latest_source:
-                    conditions.append("source = ?")
-                    params.append(latest_source)
+                    return fetch_with_optional_source(str(latest_source))
+                return fetch_with_optional_source()
 
-            where_clause = " AND ".join(conditions) if conditions else "1=1"
+            if normalized_source and normalized_source != "all":
+                logs = fetch_with_optional_source(log_source)
+                if logs:
+                    return logs
 
-            query = f"""
-                SELECT
-                    id, timestamp, source, event_id, event_type,
-                    severity, message, hostname, username,
-                    process_name, process_id
-                FROM logs
-                WHERE {where_clause}
-                ORDER BY timestamp
-            """
+                logger.warning(
+                    "No logs found for source filter '%s'; falling back to all sources",
+                    log_source,
+                )
+                return fetch_with_optional_source()
 
-            return db.fetch_all(query, tuple(params) if params else None)
+            return fetch_with_optional_source()
 
         except Exception as e:
             logger.error(f"Failed to load logs: {e}")
             raise DatabaseError(f"Log loading failed: {e}")
+
+    def _resolve_algorithm(self, requested_algorithm: str, total_logs: int) -> str:
+        supported = {"ensemble", "isolation_forest", "one_class_svm", "statistical"}
+        normalized = requested_algorithm.strip().lower()
+
+        if normalized in supported:
+            return normalized
+
+        if normalized in {"auto", "adaptive", "flexible"}:
+            # Adaptive selection keeps inference stable across very small/large sets.
+            if total_logs < 75:
+                return "statistical"
+            if total_logs > 100000:
+                return "isolation_forest"
+            return "ensemble"
+
+        logger.warning("Unknown algorithm '%s'; falling back to ensemble", requested_algorithm)
+        return "ensemble"
 
     def _create_session(
         self, session_id, algorithm, start_time, end_time, threshold, log_source

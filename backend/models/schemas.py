@@ -25,6 +25,8 @@ class SeverityLevel(str, Enum):
 
 class AnalysisAlgorithm(str, Enum):
     """Analysis algorithms"""
+    AUTO = "auto"
+    ADAPTIVE = "adaptive"
     ISOLATION_FOREST = "isolation_forest"
     ONE_CLASS_SVM = "one_class_svm"
     STATISTICAL = "statistical"

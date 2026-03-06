@@ -1,0 +1,13 @@
+{
+  "datasets": [
+    {
+      "dataset_id": "sample_9e8b1299b6af",
+      "filename": "sample.txt",
+      "file_path": "E:\\Project Quorum\\backend\\data\\uploads\\sample.txt",
+      "db_path": "E:\\Project Quorum\\backend\\data\\databases\\datasets\\sample_9e8b1299b6af.duckdb",
+      "sha256": "9e8b1299b6af402798f64815a2df71f9b5415968f0acf71cee4806c599688dc7",
+      "size_bytes": 1282,
+      "uploaded_at": "2026-02-23T11:47:20.422944"
+    }
+  ]
+}

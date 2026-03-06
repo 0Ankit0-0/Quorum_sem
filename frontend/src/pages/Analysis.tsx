@@ -18,6 +18,7 @@ import { useQuorumData } from "@/hooks/useQuorumData";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -29,6 +30,11 @@ import { toast } from "sonner";
 import MitreHeatmap from "@/components/analysis/MitreHeatmap";
 
 const algorithms = [
+  {
+    id: "auto",
+    label: "Adaptive Auto",
+    desc: "Automatically chooses the best model for current log volume",
+  },
   {
     id: "ensemble",
     label: "Ensemble (Recommended)",
@@ -228,20 +234,22 @@ export default function Analysis() {
                     {uploadedFiles.length > 0 && (
                       <>
                         <SelectSeparator />
-                        <SelectLabel>Specific Files</SelectLabel>
-                        {uploadedFiles.map((file) => (
-                          <SelectItem key={file.filename} value={file.filename}>
-                            <div className="flex flex-col gap-0.5">
-                              <span className="text-sm font-medium">
-                                {file.filename}
-                              </span>
-                              <span className="text-xs text-muted-foreground">
-                                {(file.size_bytes / 1024 / 1024).toFixed(2)} MB -{" "}
-                                {new Date(file.uploaded_at).toLocaleDateString()}
-                              </span>
-                            </div>
-                          </SelectItem>
-                        ))}
+                        <SelectGroup>
+                          <SelectLabel>Specific Files</SelectLabel>
+                          {uploadedFiles.map((file) => (
+                            <SelectItem key={file.filename} value={file.filename}>
+                              <div className="flex flex-col gap-0.5">
+                                <span className="text-sm font-medium">
+                                  {file.filename}
+                                </span>
+                                <span className="text-xs text-muted-foreground">
+                                  {(file.size_bytes / 1024 / 1024).toFixed(2)} MB -{" "}
+                                  {new Date(file.uploaded_at).toLocaleDateString()}
+                                </span>
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
                       </>
                     )}
                   </SelectContent>

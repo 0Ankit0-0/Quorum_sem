@@ -164,6 +164,12 @@ class ReportService:
                 spaceBefore=16,
                 spaceAfter=8
             )
+            body_style = ParagraphStyle(
+                'Body',
+                parent=styles['BodyText'],
+                fontSize=10,
+                leading=14
+            )
 
             elements.append(Paragraph("Quorum Threat Analysis Report", title_style))
             elements.append(Spacer(1, 0.15 * inch))
@@ -193,7 +199,46 @@ class ReportService:
             # Executive Summary
             elements.append(Paragraph("Executive Summary", h2_style))
             summary_text = self._generate_summary(metadata)
-            elements.append(Paragraph(summary_text, styles['BodyText']))
+            elements.append(Paragraph(summary_text, body_style))
+            elements.append(Spacer(1, 0.12 * inch))
+
+            severity = self._query_severity_distribution(session_id)
+            score_stats = self._get_score_stats(session_id)
+            top_sources = self._get_top_sources(session_id, limit=5)
+            algorithm_dist = self._get_algorithm_distribution(session_id)
+            risk_level, risk_index = self._calculate_risk_index(severity)
+
+            key_rows = [
+                ["Risk Level", risk_level, "Risk Index (0-100)", f"{risk_index}"],
+                [
+                    "Avg Threat Score",
+                    f"{score_stats['avg_score']:.3f}",
+                    "Max Threat Score",
+                    f"{score_stats['max_score']:.3f}",
+                ],
+                [
+                    "Critical + High",
+                    str(severity.get('CRITICAL', 0) + severity.get('HIGH', 0)),
+                    "Anomaly Rate",
+                    f"{((metadata['total_anomalies'] / metadata['total_logs']) * 100):.2f}%" if metadata['total_logs'] else "0.00%",
+                ],
+            ]
+            key_table = Table(key_rows, colWidths=[1.4 * inch, 1.8 * inch, 1.6 * inch, 1.2 * inch])
+            key_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f5f7fb')),
+                ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#cfd8e3')),
+                ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#d9e1ec')),
+                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+                ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+                ('FONTNAME', (2, 0), (2, -1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('TEXTCOLOR', (0, 0), (-1, -1), colors.HexColor('#1b2a41')),
+                ('ALIGN', (1, 0), (1, -1), 'CENTER'),
+                ('ALIGN', (3, 0), (3, -1), 'CENTER'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ]))
+            elements.append(Paragraph("Key Risk Indicators", h2_style))
+            elements.append(key_table)
             elements.append(Spacer(1, 0.1 * inch))
 
             if include_graphs:
@@ -225,25 +270,76 @@ class ReportService:
                     elements.append(Image(chart4, width=5.5 * inch, height=2.8 * inch))
                     elements.append(Spacer(1, 0.2 * inch))
 
+            elements.append(Paragraph("Detection Breakdown", h2_style))
+            sev_total = max(sum(severity.values()), 1)
+            sev_rows = [["Severity", "Count", "Percent"]]
+            for sev in ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']:
+                cnt = severity.get(sev, 0)
+                sev_rows.append([sev, str(cnt), f"{(cnt / sev_total) * 100:.1f}%"])
+            sev_table = Table(sev_rows, colWidths=[1.6 * inch, 1.3 * inch, 1.3 * inch])
+            sev_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#203a43')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor('#cad4df')),
+                ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ]))
+            elements.append(sev_table)
+            elements.append(Spacer(1, 0.15 * inch))
+
+            if algorithm_dist:
+                algo_rows = [["Algorithm", "Findings", "Share"]]
+                algo_total = max(sum(a['count'] for a in algorithm_dist), 1)
+                for a in algorithm_dist:
+                    algo_rows.append([
+                        a['algorithm'] or 'N/A',
+                        str(a['count']),
+                        f"{(a['count'] / algo_total) * 100:.1f}%"
+                    ])
+                algo_table = Table(algo_rows, colWidths=[2.5 * inch, 1.2 * inch, 1.2 * inch])
+                algo_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#16213e')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor('#cad4df')),
+                    ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ]))
+                elements.append(Paragraph("Algorithm Contribution", h2_style))
+                elements.append(algo_table)
+                elements.append(Spacer(1, 0.1 * inch))
+
+            if top_sources:
+                source_lines = ", ".join([f"{s['source']} ({s['count']})" for s in top_sources])
+                elements.append(Paragraph(f"<b>Top Sources:</b> {source_lines}", body_style))
+                elements.append(Spacer(1, 0.1 * inch))
+
             # Top anomalies table
             elements.append(PageBreak())
-            elements.append(Paragraph("Top Detected Threats", h2_style))
+            elements.append(Paragraph("Top Detected Threats (Detailed)", h2_style))
 
             top_anomalies = self._get_top_anomalies(session_id, limit=15)
 
             if top_anomalies:
-                header = ['Score', 'Severity', 'Technique', 'Source', 'Timestamp']
+                header = ['Score', 'Severity', 'MITRE', 'Source', 'Event', 'Host/User', 'Timestamp']
                 rows = [header]
                 for a in top_anomalies:
+                    mitre = a.get('mitre_technique_id') or 'N/A'
+                    tactic = a.get('mitre_tactic') or ''
                     rows.append([
                         f"{a['anomaly_score']:.3f}",
                         a['severity'],
-                        a.get('mitre_technique_id') or 'N/A',
-                        (a['source'] or '')[:18],
+                        f"{mitre} {f'({tactic})' if tactic else ''}"[:22],
+                        (a['source'] or '')[:14],
+                        (a.get('event_type') or a.get('event_id') or 'N/A')[:14],
+                        f"{(a.get('hostname') or 'N/A')[:8]}/{(a.get('username') or 'N/A')[:8]}",
                         str(a['log_timestamp'])[:16]
                     ])
 
-                col_widths = [0.8*inch, 1*inch, 1.2*inch, 1.8*inch, 1.8*inch]
+                col_widths = [0.55*inch, 0.75*inch, 1.4*inch, 1.0*inch, 0.95*inch, 1.05*inch, 1.0*inch]
                 t = Table(rows, colWidths=col_widths)
 
                 severity_colors = {
@@ -274,6 +370,29 @@ class ReportService:
 
                 t.setStyle(TableStyle(table_style))
                 elements.append(t)
+                elements.append(Spacer(1, 0.2 * inch))
+
+            top_techniques = self._get_top_mitre_techniques(session_id, limit=10)
+            if top_techniques:
+                elements.append(Paragraph("Top MITRE Techniques", h2_style))
+                mitre_rows = [["Technique", "Tactic", "Count"]]
+                for r in top_techniques:
+                    mitre_rows.append([
+                        (r.get('mitre_technique_id') or 'N/A')[:20],
+                        (r.get('mitre_tactic') or 'N/A').replace('_', ' ').title()[:28],
+                        str(r.get('count', 0))
+                    ])
+                mt = Table(mitre_rows, colWidths=[1.5 * inch, 3.1 * inch, 0.8 * inch])
+                mt.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a1a2e')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('GRID', (0, 0), (-1, -1), 0.35, colors.HexColor('#d0d7e2')),
+                    ('ALIGN', (2, 1), (2, -1), 'CENTER'),
+                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ]))
+                elements.append(mt)
 
             # MITRE Summary
             mitre_summary = self._get_mitre_summary(session_id)
@@ -285,7 +404,15 @@ class ReportService:
                     f"and <b>{mitre_summary['unique_techniques']}</b> unique technique(s) "
                     f"from the MITRE ATT&CK framework."
                 )
-                elements.append(Paragraph(mitre_text, styles['BodyText']))
+                elements.append(Paragraph(mitre_text, body_style))
+
+            recommendations = self._build_recommendations(severity, top_sources, top_techniques)
+            if recommendations:
+                elements.append(Spacer(1, 0.25 * inch))
+                elements.append(Paragraph("Recommended Actions", h2_style))
+                for idx, rec in enumerate(recommendations, start=1):
+                    elements.append(Paragraph(f"{idx}. {rec}", body_style))
+                    elements.append(Spacer(1, 0.04 * inch))
 
             doc.build(elements)
             logger.info(f"PDF report: {output_path}")
@@ -355,7 +482,19 @@ class ReportService:
                 JOIN logs l ON a.log_id = l.id
                 ORDER BY l.timestamp
             """
-            rows = db.fetch_all(query)
+            if session_id:
+                query = """
+                    SELECT a.anomaly_score, a.severity, l.timestamp
+                    FROM anomalies a
+                    JOIN logs l ON a.log_id = l.id
+                    WHERE a.detected_at >= (
+                        SELECT start_time FROM analysis_sessions WHERE session_id = ?
+                    )
+                    ORDER BY l.timestamp
+                """
+                rows = db.fetch_all(query, (session_id,))
+            else:
+                rows = db.fetch_all(query)
             if not rows or len(rows) < 2:
                 return None
 
@@ -427,7 +566,21 @@ class ReportService:
                 ORDER BY count DESC
                 LIMIT 8
             """
-            rows = db.fetch_all(query)
+            if session_id:
+                query = """
+                    SELECT l.source, COUNT(*) as count
+                    FROM anomalies a
+                    JOIN logs l ON a.log_id = l.id
+                    WHERE a.detected_at >= (
+                        SELECT start_time FROM analysis_sessions WHERE session_id = ?
+                    )
+                    GROUP BY l.source
+                    ORDER BY count DESC
+                    LIMIT 8
+                """
+                rows = db.fetch_all(query, (session_id,))
+            else:
+                rows = db.fetch_all(query)
             if not rows:
                 return None
 
@@ -466,7 +619,20 @@ class ReportService:
                 GROUP BY mitre_tactic
                 ORDER BY count DESC
             """
-            rows = db.fetch_all(query)
+            if session_id:
+                query = """
+                    SELECT mitre_tactic, COUNT(*) as count
+                    FROM anomalies
+                    WHERE mitre_tactic IS NOT NULL
+                    AND detected_at >= (
+                        SELECT start_time FROM analysis_sessions WHERE session_id = ?
+                    )
+                    GROUP BY mitre_tactic
+                    ORDER BY count DESC
+                """
+                rows = db.fetch_all(query, (session_id,))
+            else:
+                rows = db.fetch_all(query)
             if not rows:
                 return None
 
@@ -597,8 +763,9 @@ class ReportService:
         try:
             if session_id:
                 query = """
-                    SELECT a.anomaly_score, a.severity, a.mitre_technique_id,
-                           l.timestamp as log_timestamp, l.source
+                    SELECT a.anomaly_score, a.severity, a.mitre_technique_id, a.mitre_tactic,
+                           l.timestamp as log_timestamp, l.source, l.event_id, l.event_type,
+                           l.hostname, l.username, a.explanation
                     FROM anomalies a JOIN logs l ON a.log_id = l.id
                     WHERE a.detected_at >= (
                         SELECT start_time FROM analysis_sessions WHERE session_id = ?
@@ -608,8 +775,9 @@ class ReportService:
                 return db.fetch_all(query, (session_id, limit))
             else:
                 query = """
-                    SELECT a.anomaly_score, a.severity, a.mitre_technique_id,
-                           l.timestamp as log_timestamp, l.source
+                    SELECT a.anomaly_score, a.severity, a.mitre_technique_id, a.mitre_tactic,
+                           l.timestamp as log_timestamp, l.source, l.event_id, l.event_type,
+                           l.hostname, l.username, a.explanation
                     FROM anomalies a JOIN logs l ON a.log_id = l.id
                     ORDER BY a.anomaly_score DESC LIMIT ?
                 """
@@ -617,6 +785,193 @@ class ReportService:
         except Exception as e:
             logger.error(f"Top anomalies error: {e}")
             return []
+
+    def _get_score_stats(self, session_id: Optional[str]) -> Dict[str, float]:
+        """Aggregate anomaly score statistics."""
+        try:
+            if session_id:
+                row = db.fetch_one(
+                    """
+                    SELECT
+                        COALESCE(AVG(anomaly_score), 0) as avg_score,
+                        COALESCE(MAX(anomaly_score), 0) as max_score,
+                        COALESCE(MIN(anomaly_score), 0) as min_score
+                    FROM anomalies
+                    WHERE detected_at >= (
+                        SELECT start_time FROM analysis_sessions WHERE session_id = ?
+                    )
+                    """,
+                    (session_id,)
+                )
+            else:
+                row = db.fetch_one(
+                    """
+                    SELECT
+                        COALESCE(AVG(anomaly_score), 0) as avg_score,
+                        COALESCE(MAX(anomaly_score), 0) as max_score,
+                        COALESCE(MIN(anomaly_score), 0) as min_score
+                    FROM anomalies
+                    """
+                )
+            return {
+                "avg_score": float(row.get("avg_score", 0) if row else 0),
+                "max_score": float(row.get("max_score", 0) if row else 0),
+                "min_score": float(row.get("min_score", 0) if row else 0),
+            }
+        except Exception as e:
+            logger.error(f"Score stats error: {e}")
+            return {"avg_score": 0.0, "max_score": 0.0, "min_score": 0.0}
+
+    def _get_top_sources(self, session_id: Optional[str], limit: int = 5) -> List[Dict[str, Any]]:
+        """Top anomalous log sources."""
+        try:
+            if session_id:
+                rows = db.fetch_all(
+                    """
+                    SELECT COALESCE(l.source, 'unknown') as source, COUNT(*) as count
+                    FROM anomalies a
+                    JOIN logs l ON a.log_id = l.id
+                    WHERE a.detected_at >= (
+                        SELECT start_time FROM analysis_sessions WHERE session_id = ?
+                    )
+                    GROUP BY l.source
+                    ORDER BY count DESC
+                    LIMIT ?
+                    """,
+                    (session_id, limit),
+                )
+            else:
+                rows = db.fetch_all(
+                    """
+                    SELECT COALESCE(l.source, 'unknown') as source, COUNT(*) as count
+                    FROM anomalies a
+                    JOIN logs l ON a.log_id = l.id
+                    GROUP BY l.source
+                    ORDER BY count DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+            return rows or []
+        except Exception as e:
+            logger.error(f"Top sources error: {e}")
+            return []
+
+    def _get_algorithm_distribution(self, session_id: Optional[str]) -> List[Dict[str, Any]]:
+        """Distribution of findings by algorithm."""
+        try:
+            if session_id:
+                rows = db.fetch_all(
+                    """
+                    SELECT algorithm, COUNT(*) as count
+                    FROM anomalies
+                    WHERE detected_at >= (
+                        SELECT start_time FROM analysis_sessions WHERE session_id = ?
+                    )
+                    GROUP BY algorithm
+                    ORDER BY count DESC
+                    """,
+                    (session_id,),
+                )
+            else:
+                rows = db.fetch_all(
+                    """
+                    SELECT algorithm, COUNT(*) as count
+                    FROM anomalies
+                    GROUP BY algorithm
+                    ORDER BY count DESC
+                    """
+                )
+            return rows or []
+        except Exception as e:
+            logger.error(f"Algorithm distribution error: {e}")
+            return []
+
+    def _get_top_mitre_techniques(self, session_id: Optional[str], limit: int = 10) -> List[Dict[str, Any]]:
+        """Top MITRE techniques with counts."""
+        try:
+            if session_id:
+                rows = db.fetch_all(
+                    """
+                    SELECT mitre_technique_id, mitre_tactic, COUNT(*) as count
+                    FROM anomalies
+                    WHERE mitre_technique_id IS NOT NULL
+                    AND detected_at >= (
+                        SELECT start_time FROM analysis_sessions WHERE session_id = ?
+                    )
+                    GROUP BY mitre_technique_id, mitre_tactic
+                    ORDER BY count DESC
+                    LIMIT ?
+                    """,
+                    (session_id, limit),
+                )
+            else:
+                rows = db.fetch_all(
+                    """
+                    SELECT mitre_technique_id, mitre_tactic, COUNT(*) as count
+                    FROM anomalies
+                    WHERE mitre_technique_id IS NOT NULL
+                    GROUP BY mitre_technique_id, mitre_tactic
+                    ORDER BY count DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+            return rows or []
+        except Exception as e:
+            logger.error(f"Top MITRE techniques error: {e}")
+            return []
+
+    def _calculate_risk_index(self, severity: Dict[str, int]) -> tuple[str, int]:
+        """
+        Weighted severity risk index (0-100) and label.
+        Weights emphasize CRITICAL/HIGH findings.
+        """
+        weights = {"LOW": 1, "MEDIUM": 3, "HIGH": 6, "CRITICAL": 10}
+        weighted = sum(severity.get(k, 0) * v for k, v in weights.items())
+        max_weight = max(sum(severity.values()) * 10, 1)
+        index = int(round((weighted / max_weight) * 100))
+        if index >= 70:
+            return "HIGH", index
+        if index >= 40:
+            return "MEDIUM", index
+        return "LOW", index
+
+    def _build_recommendations(
+        self,
+        severity: Dict[str, int],
+        top_sources: List[Dict[str, Any]],
+        top_techniques: List[Dict[str, Any]],
+    ) -> List[str]:
+        """Generate short action-oriented recommendations from report findings."""
+        recs: List[str] = []
+
+        critical = severity.get('CRITICAL', 0)
+        high = severity.get('HIGH', 0)
+        if critical > 0:
+            recs.append(
+                f"Prioritize triage of {critical} CRITICAL anomaly/anomalies within 24 hours and isolate affected endpoints immediately."
+            )
+        if high > 0:
+            recs.append(
+                f"Investigate {high} HIGH-severity finding(s) and validate whether they indicate active lateral movement or privilege misuse."
+            )
+
+        if top_sources:
+            recs.append(
+                f"Increase logging and detection coverage for top source '{top_sources[0]['source']}' which produced {top_sources[0]['count']} anomaly/anomalies."
+            )
+
+        if top_techniques:
+            t = top_techniques[0]
+            tech = t.get('mitre_technique_id') or 'N/A'
+            tactic = (t.get('mitre_tactic') or 'unknown').replace('_', ' ')
+            recs.append(
+                f"Map incident-response playbooks to MITRE {tech} ({tactic}) and run targeted containment drills for this pattern."
+            )
+
+        recs.append("Schedule rule/model tuning to reduce false positives while preserving coverage on HIGH and CRITICAL detections.")
+        return recs[:5]
 
     def _get_mitre_summary(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
         try:

@@ -17,6 +17,7 @@ from api.routes import (
     hub,
     stream,
     cli,
+    monitoring,
 )
 from config.settings import settings
 from config.logging_config import setup_logging, get_logger
@@ -42,11 +43,13 @@ async def lifespan(app: FastAPI):
     try:
         from services.mitre_service import mitre_service
         from core.database import db
+        from core.device_monitor import device_monitor
         
         technique_count = db.get_table_count('mitre_techniques')
         if technique_count == 0:
             logger.info("Loading MITRE ATT&CK data...")
             mitre_service.load_mitre_data()
+        device_monitor.start_hotplug_monitor()
     except Exception as e:
         logger.warning(f"MITRE data initialization failed: {e}")
     
@@ -55,6 +58,10 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down API")
     from core.database import db
+    from core.device_monitor import device_monitor
+    from services.monitoring_service import monitoring_service
+    device_monitor.stop_hotplug_monitor()
+    monitoring_service.stop()
     db.close()
 
 
@@ -86,6 +93,7 @@ app.include_router(devices.router)
 app.include_router(hub.router)
 app.include_router(stream.router)
 app.include_router(cli.router)
+app.include_router(monitoring.router)
 
 
 @app.get("/")

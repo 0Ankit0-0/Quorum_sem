@@ -7,6 +7,7 @@ from typing import Optional
 from parsers.base_parser import BaseParser
 from parsers.evtx_parser import EVTXParser
 from parsers.syslog_parser import SyslogParser
+from parsers.plaintext_parser import PlainTextParser
 from core.exceptions import ParserError
 from config.logging_config import get_logger
 
@@ -20,6 +21,7 @@ class ParserFactory:
     PARSERS = [
         EVTXParser,
         SyslogParser,
+        PlainTextParser,
     ]
     
     @staticmethod
@@ -29,7 +31,7 @@ class ParserFactory:
         
         Args:
             file_path: Path to log file
-            parser_type: Explicit parser type ('evtx', 'syslog'), or None for auto-detection
+            parser_type: Explicit parser type ('evtx', 'syslog', 'text'), or None for auto-detection
         
         Returns:
             Parser instance
@@ -46,6 +48,8 @@ class ParserFactory:
                 return EVTXParser(file_path)
             elif parser_type == 'syslog':
                 return SyslogParser(file_path)
+            elif parser_type in {'text', 'txt', 'plaintext', 'plain', 'generic'}:
+                return PlainTextParser(file_path)
             else:
                 raise ParserError(f"Unknown parser type: {parser_type}")
         

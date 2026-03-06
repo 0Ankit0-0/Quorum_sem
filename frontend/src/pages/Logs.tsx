@@ -1,52 +1,94 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Upload, CheckCircle } from "lucide-react";
+import { CheckCircle, RefreshCw, Upload } from "lucide-react";
 import AppLayout from "@/components/layout/AppLayout";
 import { formatDate } from "@/lib/formatters";
-import { useQuorumData } from "@/hooks/useQuorumData";
-import { uploadLogFile } from "@/lib/api-functions";
+import {
+  getLogs,
+  getUploadedFiles,
+  type LogData,
+  type UploadedFile,
+  uploadLogFile,
+} from "@/lib/api-functions";
 import { toast } from "sonner";
 
-const SeverityBadge = ({ severity }: { severity: string }) => {
-  const map: Record<string, string> = {
-    CRITICAL: "badge-critical",
-    HIGH: "badge-high",
-    MEDIUM: "badge-medium",
-    LOW: "badge-low",
-  };
-  return <span className={map[severity] || "badge-low"}>{severity}</span>;
+const fmtBytes = (bytes: number) => {
+  if (bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let size = bytes;
+  let idx = 0;
+  while (size >= 1024 && idx < units.length - 1) {
+    size /= 1024;
+    idx += 1;
+  }
+  return `${size.toFixed(size >= 10 || idx === 0 ? 0 : 1)} ${units[idx]}`;
 };
 
 export default function Logs() {
-  const { logs, refresh } = useQuorumData();
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [query, setQuery] = useState("");
   const [uploadResult, setUploadResult] = useState<null | {
     entries: number;
     errors: number;
     duration: number;
   }>(null);
 
-  const visibleLogs = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return logs;
-    return logs.filter(
-      (log) =>
-        log.id.toLowerCase().includes(q) ||
-        log.source.toLowerCase().includes(q) ||
-        log.message.toLowerCase().includes(q) ||
-        log.severity.toLowerCase().includes(q),
-    );
-  }, [logs, query]);
+  const [files, setFiles] = useState<UploadedFile[]>([]);
+  const [selectedFile, setSelectedFile] = useState<string>("");
+  const [logs, setLogs] = useState<LogData[]>([]);
+  const [query, setQuery] = useState("");
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [loading, setLoading] = useState(false);
+
+  const selectedFileMeta = useMemo(
+    () => files.find((f) => f.filename === selectedFile) ?? null,
+    [files, selectedFile],
+  );
+
+  const loadFiles = async () => {
+    const result = await getUploadedFiles();
+    setFiles(result.files ?? []);
+    if (!selectedFile && result.files.length > 0) {
+      setSelectedFile(result.files[0].filename);
+    }
+  };
+
+  const loadLogs = async () => {
+    if (!selectedFile) {
+      setLogs([]);
+      return;
+    }
+    setLoading(true);
+    try {
+      const rows = await getLogs(200, selectedFile, query.trim() || undefined);
+      setLogs(rows);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadFiles();
+  }, []);
+
+  useEffect(() => {
+    void loadLogs();
+  }, [selectedFile, query]);
+
+  useEffect(() => {
+    if (!autoRefresh || !selectedFile) return;
+    const timer = window.setInterval(() => {
+      void loadLogs();
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [autoRefresh, selectedFile, query]);
 
   const ingestFile = async (file: File) => {
     setUploading(true);
     setUploadProgress(0);
     setUploadResult(null);
-
     try {
       const result = await uploadLogFile(file, undefined, setUploadProgress);
       setUploadResult({
@@ -54,8 +96,10 @@ export default function Logs() {
         errors: result.parse_errors + result.insert_errors,
         duration: result.duration_seconds,
       });
-      await refresh();
-      toast.success(`Ingested ${result.entries_inserted.toLocaleString()} log entries`);
+      await loadFiles();
+      setSelectedFile(file.name);
+      await loadLogs();
+      toast.success(`Ingested ${result.entries_inserted.toLocaleString()} records`);
     } catch (error) {
       console.error("Log upload failed", error);
       toast.error("Failed to upload and ingest logs");
@@ -80,15 +124,14 @@ export default function Logs() {
   };
 
   return (
-    <AppLayout title="Log Management" subtitle="Upload and analyze log files">
+    <AppLayout title="Log Management" subtitle="Dataset-isolated log ingestion and viewer">
       <div className="space-y-6">
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className={`relative rounded-lg border-2 border-dashed transition-all duration-200 p-12 text-center cursor-pointer ${
+          className={`relative rounded-lg border-2 border-dashed transition-all duration-200 p-10 text-center cursor-pointer ${
             dragOver ? "border-cyan bg-cyan/5" : "border-border hover:border-muted-foreground"
           }`}
-          style={{ background: dragOver ? "hsl(var(--cyan) / 0.05)" : "hsl(var(--card))" }}
           onDragOver={(e) => {
             e.preventDefault();
             setDragOver(true);
@@ -102,15 +145,15 @@ export default function Logs() {
             type="file"
             className="hidden"
             onChange={handleFilePick}
-            accept=".evtx,.log,.syslog,.csv,.txt"
+            accept=".evtx,.log,.syslog,.csv,.txt,.json,.jsonl,.ndjson"
           />
 
-          <Upload className="w-10 h-10 text-muted-foreground mx-auto mb-4" />
-          <p className="text-base font-medium text-foreground mb-1">Drop log files here or click to upload</p>
-          <p className="text-sm text-muted-foreground">Supports .evtx, .log, .syslog, .csv, .txt - Max 100MB</p>
+          <Upload className="w-9 h-9 text-muted-foreground mx-auto mb-3" />
+          <p className="text-base font-medium text-foreground mb-1">Drop a log file or click to upload</p>
+          <p className="text-sm text-muted-foreground">Viewer is read-only. Uploads create isolated per-file database.</p>
 
           {uploading && (
-            <div className="mt-6">
+            <div className="mt-5">
               <div className="flex justify-between text-xs font-mono text-muted-foreground mb-1">
                 <span>Uploading and ingesting...</span>
                 <span>{Math.round(uploadProgress)}%</span>
@@ -128,19 +171,12 @@ export default function Logs() {
         </motion.div>
 
         {uploadResult && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.97 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="cyber-card p-4 flex items-center gap-6"
-            style={{ borderColor: "hsl(var(--low) / 0.4)" }}
-          >
+          <div className="cyber-card p-4 flex items-center gap-6" style={{ borderColor: "hsl(var(--low) / 0.4)" }}>
             <CheckCircle className="w-6 h-6 text-cyber-low shrink-0" />
             <div className="flex gap-6 text-sm">
               <div>
                 <p className="text-muted-foreground text-xs">Entries Inserted</p>
-                <p className="font-mono font-semibold text-foreground">
-                  {uploadResult.entries.toLocaleString()}
-                </p>
+                <p className="font-mono font-semibold text-foreground">{uploadResult.entries.toLocaleString()}</p>
               </div>
               <div>
                 <p className="text-muted-foreground text-xs">Errors</p>
@@ -151,70 +187,75 @@ export default function Logs() {
                 <p className="font-mono font-semibold text-cyan">{uploadResult.duration}s</p>
               </div>
             </div>
-          </motion.div>
+          </div>
         )}
 
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.2 }}
-          className="cyber-card overflow-hidden"
-        >
-          <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-            <div>
-              <h3 className="text-sm font-semibold">Recent Logs</h3>
-              <p className="text-xs text-muted-foreground">Last 50 ingested entries</p>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="cyber-card p-4 space-y-3">
+            <p className="text-sm font-semibold">Dataset Selection</p>
+            <select
+              value={selectedFile}
+              onChange={(e) => setSelectedFile(e.target.value)}
+              className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm text-foreground font-mono outline-none focus:border-cyan/40"
+            >
+              {files.length === 0 && <option value="">No uploads found</option>}
+              {files.map((f) => (
+                <option key={f.filename} value={f.filename}>
+                  {f.filename}
+                </option>
+              ))}
+            </select>
+
+            <div className="space-y-1 text-xs font-mono">
+              <p className="text-muted-foreground">Size: <span className="text-foreground">{fmtBytes(selectedFileMeta?.size_bytes ?? 0)}</span></p>
+              <p className="text-muted-foreground">Uploaded: <span className="text-foreground">{selectedFileMeta ? formatDate(selectedFileMeta.uploaded_at) : "-"}</span></p>
+              <p className="text-muted-foreground">Records: <span className="text-foreground">{(selectedFileMeta?.record_count ?? 0).toLocaleString()}</span></p>
+              <p className="text-muted-foreground">DB: <span className="text-foreground break-all">{selectedFileMeta?.db_path ?? "Not created"}</span></p>
             </div>
-            <div className="flex items-center gap-2">
+          </div>
+
+          <div className="cyber-card p-4 lg:col-span-2">
+            <div className="flex items-center justify-between gap-3 mb-3">
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Filter logs..."
-                className="text-xs bg-muted border border-border rounded-md px-3 py-1.5 text-foreground placeholder:text-muted-foreground font-mono outline-none focus:border-cyan/50 w-48"
+                placeholder="Search in selected dataset logs..."
+                className="flex-1 text-xs bg-muted border border-border rounded-md px-3 py-2 text-foreground placeholder:text-muted-foreground font-mono outline-none focus:border-cyan/50"
               />
+              <button
+                onClick={() => void loadLogs()}
+                className="px-3 py-2 rounded-md text-xs font-semibold flex items-center gap-1.5 border border-border hover:border-cyan/40"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Refresh
+              </button>
+              <label className="text-xs font-mono text-muted-foreground flex items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={autoRefresh}
+                  onChange={(e) => setAutoRefresh(e.target.checked)}
+                />
+                Auto refresh
+              </label>
+            </div>
+            <p className="text-[11px] text-muted-foreground mb-2">Read-only terminal viewer ({logs.length} rows)</p>
+            <div className="rounded-md border border-border bg-black/60 max-h-[420px] overflow-y-auto p-3">
+              <div className="space-y-1 font-mono text-xs">
+                {loading && <p className="text-cyan">Loading...</p>}
+                {!loading && logs.length === 0 && <p className="text-muted-foreground">No logs for selected dataset.</p>}
+                {logs.map((log) => (
+                  <div key={log.id} className="text-foreground break-all leading-relaxed">
+                    <span className="text-cyan">{new Date(log.timestamp).toLocaleTimeString()}</span>{" "}
+                    <span className="text-cyber-high">[{log.severity}]</span>{" "}
+                    <span className="text-muted-foreground">{log.source}</span>{" "}
+                    <span>{log.message}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  {["ID", "Timestamp", "Severity", "Source", "Message", "Entries"].map((h) => (
-                    <th
-                      key={h}
-                      className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide"
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {visibleLogs.map((log, i) => (
-                  <motion.tr
-                    key={log.id}
-                    className="table-row-cyber border-b border-border/50 last:border-0 cursor-pointer"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: i * 0.02 }}
-                  >
-                    <td className="px-4 py-3 font-mono text-xs text-cyan">{log.id}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground whitespace-nowrap">
-                      {formatDate(log.timestamp)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <SeverityBadge severity={log.severity} />
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-foreground">{log.source}</td>
-                    <td className="px-4 py-3 text-xs text-foreground max-w-sm truncate">{log.message}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{log.entries}</td>
-                  </motion.tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </motion.div>
+        </div>
       </div>
     </AppLayout>
   );
 }
-

@@ -1,253 +1,128 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Scan, AlertTriangle, Usb, Network } from "lucide-react";
+import { AlertTriangle, Cpu, Link2Off, Usb } from "lucide-react";
 import AppLayout from "@/components/layout/AppLayout";
-import { formatDate } from "@/lib/formatters";
-import { useQuorumData } from "@/hooks/useQuorumData";
-import { toast } from "sonner";
+import { getDeviceEvents, type DeviceEvent } from "@/lib/api-functions";
 
-const RiskBadge = ({ risk }: { risk: string }) => {
-  const map: Record<string, string> = {
-    CRITICAL: "badge-critical",
-    HIGH: "badge-high",
-    MEDIUM: "badge-medium",
-    LOW: "badge-low",
-  };
-  return <span className={map[risk] || "badge-low"}>{risk}</span>;
+const fmtTime = (value?: string | null) => {
+  if (!value) return "-";
+  return new Date(value).toLocaleString();
+};
+
+const fmtDuration = (seconds?: number | null) => {
+  if (!seconds || seconds <= 0) return "-";
+  const total = Math.floor(seconds);
+  const min = Math.floor(total / 60);
+  const sec = total % 60;
+  return `${min}m ${String(sec).padStart(2, "0")}s`;
 };
 
 export default function Devices() {
-  const { devices, refresh } = useQuorumData();
-  const [scanning, setScanning] = useState(false);
+  const [events, setEvents] = useState<DeviceEvent[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  const handleScan = async () => {
-    setScanning(true);
+  const loadEvents = async () => {
+    setLoading(true);
     try {
-      await refresh();
-      toast.success("Device scan refreshed from backend");
-    } catch (error) {
-      console.error("Device refresh failed", error);
-      toast.error("Failed to refresh devices");
+      const rows = await getDeviceEvents(300);
+      setEvents(rows);
     } finally {
-      setScanning(false);
+      setLoading(false);
     }
   };
 
-  const criticalDevices = [...devices.usb, ...devices.lan].filter(
-    (d) => d.risk === "CRITICAL" || d.risk === "HIGH",
-  );
+  useEffect(() => {
+    void loadEvents();
+    const timer = window.setInterval(() => {
+      void loadEvents();
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const stats = useMemo(() => {
+    const connected = events.filter((e) => e.event === "connected").length;
+    const removed = events.filter((e) => e.event === "disconnected").length;
+    const highRisk = events.filter((e) => {
+      const r = String(e.risk_level ?? "").toUpperCase();
+      return r === "HIGH" || r === "CRITICAL";
+    }).length;
+    return { connected, removed, highRisk };
+  }, [events]);
 
   return (
-    <AppLayout
-      title="Device Scanner"
-      subtitle="USB hotplug detection and LAN discovery"
-    >
+    <AppLayout title="Device Monitor" subtitle="Automatic USB/LAN event tracking with duration history">
       <div className="space-y-6">
-        <div className="flex items-center gap-4 flex-wrap">
-          <button
-            onClick={handleScan}
-            disabled={scanning}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-md text-sm font-semibold transition-all"
-            style={{
-              background: "hsl(var(--cyan) / 0.15)",
-              color: "hsl(var(--cyan))",
-              border: "1px solid hsl(var(--cyan) / 0.3)",
-            }}
-          >
-            <Scan className={`w-4 h-4 ${scanning ? "animate-spin" : ""}`} />
-            {scanning ? "Scanning..." : "Scan Devices"}
-          </button>
-
-          <div className="flex gap-3">
-            {[
-              {
-                label: "USB Devices",
-                value: devices.usb.length,
-                icon: Usb,
-                color: "cyan",
-              },
-              {
-                label: "LAN Nodes",
-                value: devices.lan.length,
-                icon: Network,
-                color: "cyan",
-              },
-              {
-                label: "Risky Devices",
-                value: criticalDevices.length,
-                icon: AlertTriangle,
-                color: "critical",
-              },
-            ].map((s) => (
-              <div key={s.label} className="cyber-card px-4 py-3 flex items-center gap-3">
-                <s.icon
-                  className="w-4 h-4"
-                  style={{ color: `hsl(var(--${s.color}))` }}
-                />
-                <div>
-                  <p className="text-xs text-muted-foreground">{s.label}</p>
-                  <p
-                    className="text-lg font-bold font-mono"
-                    style={{ color: `hsl(var(--${s.color}))` }}
-                  >
-                    {s.value}
-                  </p>
-                </div>
-              </div>
-            ))}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="cyber-card p-4 flex items-center gap-3">
+            <Usb className="w-5 h-5 text-cyan" />
+            <div>
+              <p className="text-xs text-muted-foreground">Connected Events</p>
+              <p className="text-xl font-mono text-foreground">{stats.connected}</p>
+            </div>
+          </div>
+          <div className="cyber-card p-4 flex items-center gap-3">
+            <Link2Off className="w-5 h-5 text-cyber-high" />
+            <div>
+              <p className="text-xs text-muted-foreground">Removed Events</p>
+              <p className="text-xl font-mono text-foreground">{stats.removed}</p>
+            </div>
+          </div>
+          <div className="cyber-card p-4 flex items-center gap-3">
+            <AlertTriangle className="w-5 h-5 text-cyber-critical" />
+            <div>
+              <p className="text-xs text-muted-foreground">High Risk</p>
+              <p className="text-xl font-mono text-cyber-critical">{stats.highRisk}</p>
+            </div>
           </div>
         </div>
 
-        {criticalDevices.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="rounded-lg p-4 flex items-start gap-3"
-            style={{
-              background: "hsl(var(--critical) / 0.08)",
-              border: "1px solid hsl(var(--critical) / 0.3)",
-            }}
-          >
-            <AlertTriangle className="w-4 h-4 text-cyber-critical shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-semibold text-cyber-critical">Security Alert</p>
-              <p className="text-xs text-muted-foreground">
-                {criticalDevices.length} high-risk device(s) detected. Potential
-                unauthorized hardware or unknown network adapters present in the
-                air-gapped environment.
-              </p>
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="cyber-card overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+            <div className="flex items-center gap-2">
+              <Cpu className="w-4 h-4 text-cyan" />
+              <h3 className="text-sm font-semibold">Device Event History</h3>
             </div>
-          </motion.div>
-        )}
-
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="cyber-card overflow-hidden"
-        >
-          <div className="flex items-center gap-2 px-5 py-4 border-b border-border">
-            <Usb className="w-4 h-4 text-cyan" />
-            <h3 className="text-sm font-semibold">USB Devices</h3>
+            <span className="text-xs font-mono text-muted-foreground">
+              {loading ? "Refreshing..." : `${events.length} records`}
+            </span>
           </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border">
-                {["Device", "VID:PID", "Type", "Risk", "Inserted", "Status"].map(
-                  (h) => (
+          <div className="overflow-x-auto max-h-[560px]">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border">
+                  {["Device Name", "Type", "Event", "Connected", "Removed", "Duration", "Risk"].map((h) => (
                     <th
                       key={h}
                       className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide"
                     >
                       {h}
                     </th>
-                  ),
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {devices.usb.map((device, i) => (
-                <motion.tr
-                  key={device.id}
-                  className="table-row-cyber border-b border-border/50 last:border-0"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: i * 0.05 }}
-                >
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-medium text-foreground">
-                        {device.name}
-                      </span>
-                      {device.is_new && (
-                        <span
-                          className="text-xs font-mono px-1.5 py-0.5 rounded"
-                          style={{
-                            background: "hsl(var(--high) / 0.15)",
-                            color: "hsl(var(--high))",
-                          }}
-                        >
-                          NEW
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                    {device.vid}:{device.pid}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs text-foreground">
-                    {device.type}
-                  </td>
-                  <td className="px-4 py-3">
-                    <RiskBadge risk={device.risk} />
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                    {formatDate(device.inserted_at)}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="text-xs text-cyber-low">Connected</span>
-                  </td>
-                </motion.tr>
-              ))}
-            </tbody>
-          </table>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="cyber-card overflow-hidden"
-        >
-          <div className="flex items-center gap-2 px-5 py-4 border-b border-border">
-            <Network className="w-4 h-4 text-cyan" />
-            <h3 className="text-sm font-semibold">LAN Nodes</h3>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {events.map((row, i) => (
+                  <motion.tr
+                    key={`${row.device_id}-${row.connected_at}-${i}`}
+                    className="table-row-cyber border-b border-border/50 last:border-0"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: i * 0.01 }}
+                  >
+                    <td className="px-4 py-3 text-xs font-medium text-foreground">{row.name}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-cyan">{row.device_class}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-foreground">{row.event.toUpperCase()}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{fmtTime(row.connected_at)}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{fmtTime(row.removed_at)}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-foreground">{fmtDuration(row.duration_seconds)}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-cyber-high">{row.risk_level ?? "INFO"}</td>
+                  </motion.tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border">
-                {["IP Address", "Hostname", "MAC", "OS", "Risk", "Status"].map(
-                  (h) => (
-                    <th
-                      key={h}
-                      className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide"
-                    >
-                      {h}
-                    </th>
-                  ),
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {devices.lan.map((node, i) => (
-                <motion.tr
-                  key={node.id}
-                  className="table-row-cyber border-b border-border/50 last:border-0"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: i * 0.05 }}
-                >
-                  <td className="px-4 py-3 font-mono text-xs text-cyan">{node.ip}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-foreground">
-                    {node.hostname}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                    {node.mac}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-muted-foreground">{node.os}</td>
-                  <td className="px-4 py-3">
-                    <RiskBadge risk={node.risk} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="text-xs text-cyber-low">{node.status}</span>
-                  </td>
-                </motion.tr>
-              ))}
-            </tbody>
-          </table>
         </motion.div>
       </div>
     </AppLayout>
   );
 }
-
