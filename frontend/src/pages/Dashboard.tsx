@@ -3,7 +3,7 @@ import { Activity, AlertTriangle, FileText, Server, TrendingUp, Zap } from "luci
 import type { LucideIcon } from "lucide-react";
 import AppLayout from "@/components/layout/AppLayout";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, Legend,
   ResponsiveContainer, Area, AreaChart
 } from "recharts";
 import {
@@ -120,14 +120,14 @@ export default function Dashboard() {
               <TrendingUp className="w-4 h-4 text-muted-foreground" />
             </div>
             <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={severityDistribution} barSize={32}>
+              <BarChart data={severityDistribution} barSize={36} barCategoryGap="30%">
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                <XAxis dataKey="severity" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))", fontFamily: "JetBrains Mono" }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
-                <Tooltip content={<CustomTooltip />} />
-                <Bar dataKey="count" radius={[3, 3, 0, 0]}>
+                <XAxis dataKey="severity" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))", fontFamily: "JetBrains Mono" }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} width={32} />
+                <Tooltip content={<CustomTooltip />} cursor={{ fill: "hsl(var(--cyan) / 0.05)" }} />
+                <Bar dataKey="count" radius={[4, 4, 0, 0]} maxBarSize={48}>
                   {severityDistribution.map((entry, index) => (
-                    <rect key={index} fill={entry.fill} />
+                    <Cell key={index} fill={entry.fill} fillOpacity={0.85} />
                   ))}
                 </Bar>
               </BarChart>
@@ -143,26 +143,39 @@ export default function Dashboard() {
               </div>
               <Zap className="w-4 h-4 text-muted-foreground" />
             </div>
+            {timelineData.length === 0 ? (
+              <div className="h-[200px] flex flex-col items-center justify-center gap-2">
+                <Zap className="w-6 h-6 text-muted-foreground/30" />
+                <p className="text-xs text-muted-foreground/50 font-mono">No timeline data</p>
+              </div>
+            ) : (
             <ResponsiveContainer width="100%" height={200}>
-              <AreaChart data={timelineData}>
+              <AreaChart data={timelineData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="gradAnomalies" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(var(--cyan))" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="hsl(var(--cyan))" stopOpacity={0} />
+                    <stop offset="5%" stopColor="hsl(192 100% 50%)" stopOpacity={0.35} />
+                    <stop offset="95%" stopColor="hsl(192 100% 50%)" stopOpacity={0.02} />
                   </linearGradient>
                   <linearGradient id="gradCritical" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(var(--critical))" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="hsl(var(--critical))" stopOpacity={0} />
+                    <stop offset="5%" stopColor="hsl(0 84% 60%)" stopOpacity={0.4} />
+                    <stop offset="95%" stopColor="hsl(0 84% 60%)" stopOpacity={0.02} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                <XAxis dataKey="time" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))", fontFamily: "JetBrains Mono" }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
+                <XAxis dataKey="time" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))", fontFamily: "JetBrains Mono" }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+                <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} width={32} />
                 <Tooltip content={<CustomTooltip />} />
-                <Area type="monotone" dataKey="anomalies" stroke="hsl(var(--cyan))" fill="url(#gradAnomalies)" strokeWidth={2} name="Anomalies" />
-                <Area type="monotone" dataKey="critical" stroke="hsl(var(--critical))" fill="url(#gradCritical)" strokeWidth={2} name="Critical" />
+                <Legend
+                  iconType="circle"
+                  iconSize={6}
+                  wrapperStyle={{ fontSize: "10px", fontFamily: "JetBrains Mono", paddingTop: "4px" }}
+                  formatter={(value) => <span style={{ color: "hsl(var(--muted-foreground))" }}>{value}</span>}
+                />
+                <Area type="monotone" dataKey="anomalies" stroke="hsl(192 100% 50%)" fill="url(#gradAnomalies)" strokeWidth={1.5} name="Anomalies" dot={false} activeDot={{ r: 3, strokeWidth: 0, fill: "hsl(192 100% 50%)" }} />
+                <Area type="monotone" dataKey="critical" stroke="hsl(0 84% 60%)" fill="url(#gradCritical)" strokeWidth={1.5} name="Critical" dot={false} activeDot={{ r: 3, strokeWidth: 0, fill: "hsl(0 84% 60%)" }} />
               </AreaChart>
             </ResponsiveContainer>
+            )}
           </motion.div>
         </div>
 
