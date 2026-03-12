@@ -119,7 +119,7 @@ class ReportService:
             from reportlab.lib.units import inch
             from reportlab.lib import colors
             from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-            from reportlab.lib.enums import TA_CENTER, TA_LEFT
+            from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
             from reportlab.platypus import (
                 SimpleDocTemplate, Table, TableStyle, Paragraph,
                 Spacer, PageBreak, Image, HRFlowable, KeepTogether,
@@ -174,14 +174,19 @@ class ReportService:
             caption     = _ps('Caption', fontSize=8, textColor=GRAY_500,
                                alignment=TA_CENTER, spaceAfter=2)
             body_style  = _ps('Body', parent='BodyText', fontSize=9,
-                               textColor=GRAY_700, leading=13)
+                               textColor=GRAY_700, leading=13, alignment=TA_JUSTIFY)
             h2_style    = _ps('SH2', fontSize=11, fontName='Helvetica-Bold',
                                textColor=NAVY, spaceBefore=2, spaceAfter=4, leading=14)
+            h3_style    = _ps('SH3', fontSize=9.5, fontName='Helvetica-Bold',
+                               textColor=GRAY_500, spaceBefore=0, spaceAfter=6, leading=12)
 
             # ── Helpers ───────────────────────────────────────────────
-            def _section(title: str):
-                """Accent-bar section heading (cyan left border)."""
-                inner = Table([[Paragraph(title, h2_style)]], colWidths=[6.5 * inch])
+            def _section(title: str, subtitle: Optional[str] = None):
+                """Accent-bar section heading (cyan left border) with optional subtitle."""
+                rows = [[Paragraph(title, h2_style)]]
+                if subtitle:
+                    rows.append([Paragraph(subtitle, h3_style)])
+                inner = Table(rows, colWidths=[6.5 * inch])
                 inner.setStyle(TableStyle([
                     ('LINEBEFORE', (0, 0), (0, -1), 3, ACCENT),
                     ('LEFTPADDING',  (0, 0), (-1, -1), 8),
@@ -246,7 +251,7 @@ class ReportService:
                     canvas.setFillColor(WHITE)
                     canvas.setFont('Helvetica-Bold', 8)
                     canvas.drawString(0.75 * inch, PAGE_H - 0.3 * inch,
-                                      'QUORUM  ·  Threat Analysis Report')
+                                      'QUORUM - Threat Analysis Report')
                     canvas.setFont('Helvetica', 7.5)
                     canvas.drawRightString(PAGE_W - 0.75 * inch, PAGE_H - 0.3 * inch,
                                            metadata.get('generated_at', ''))
@@ -258,7 +263,7 @@ class ReportService:
                 canvas.setFont('Helvetica', 7)
                 canvas.setFillColor(GRAY_500)
                 canvas.drawString(0.75 * inch, 0.36 * inch,
-                                  'CONFIDENTIAL — For authorized personnel only')
+                                  'CONFIDENTIAL - For authorized personnel only')
                 if show_header:
                     canvas.drawRightString(PAGE_W - 0.75 * inch, 0.36 * inch,
                                            f'Page {doc.page}')
@@ -336,7 +341,7 @@ class ReportService:
 
             # Classification badge
             badge_data = [[
-                Paragraph('CONFIDENTIAL  ·  AIR-GAPPED ENVIRONMENT',
+                Paragraph('CONFIDENTIAL - AIR-GAPPED ENVIRONMENT',
                            _ps('badge', fontSize=8, fontName='Helvetica-Bold',
                                textColor=WHITE, alignment=TA_CENTER))
             ]]
@@ -353,7 +358,7 @@ class ReportService:
             # ════════════════════════════════════════════════════════
             # 2. EXECUTIVE SUMMARY
             # ════════════════════════════════════════════════════════
-            elements.append(_section('Executive Summary'))
+            elements.append(_section('Executive Summary', 'High-level findings and risk posture'))
             elements.append(Spacer(1, 0.06 * inch))
             sum_box = Table(
                 [[Paragraph(self._generate_summary(metadata), body_style)]],
@@ -373,7 +378,7 @@ class ReportService:
             # ════════════════════════════════════════════════════════
             # 3. KEY RISK INDICATORS
             # ════════════════════════════════════════════════════════
-            elements.append(_section('Key Risk Indicators'))
+            elements.append(_section('Key Risk Indicators', 'Operational metrics and severity overview'))
             elements.append(Spacer(1, 0.06 * inch))
             kri_rows = [
                 ['Metric', 'Value', 'Metric', 'Value'],
@@ -408,7 +413,7 @@ class ReportService:
                 chart3 = self._create_source_pie_chart(session_id)
                 chart4 = self._create_mitre_bar_chart(session_id)
 
-                elements.append(_section('Visual Analytics'))
+                elements.append(_section('Visual Analytics', 'Severity mix, trends, and MITRE coverage'))
                 elements.append(Spacer(1, 0.08 * inch))
 
                 # Severity bar + Source pie — side by side
@@ -453,7 +458,7 @@ class ReportService:
             # ════════════════════════════════════════════════════════
             # 5. DETECTION BREAKDOWN
             # ════════════════════════════════════════════════════════
-            elements.append(_section('Detection Breakdown'))
+            elements.append(_section('Detection Breakdown', 'Severity distribution across detected anomalies'))
             elements.append(Spacer(1, 0.06 * inch))
 
             sev_label_colors = {
@@ -486,7 +491,7 @@ class ReportService:
 
             # Algorithm contribution
             if algorithm_dist:
-                elements.append(_section('Algorithm Contribution'))
+                elements.append(_section('Algorithm Contribution', 'Findings by detection model'))
                 elements.append(Spacer(1, 0.06 * inch))
                 algo_total = max(sum(a['count'] for a in algorithm_dist), 1)
                 algo_rows = [['Algorithm', 'Findings', 'Share']]
@@ -508,7 +513,7 @@ class ReportService:
 
             # Top anomalous sources
             if top_sources:
-                elements.append(_section('Top Anomalous Sources'))
+                elements.append(_section('Top Anomalous Sources', 'Sources generating the most anomalies'))
                 elements.append(Spacer(1, 0.06 * inch))
                 src_total = max(sum(s['count'] for s in top_sources), 1)
                 src_rows = [['Source', 'Count', 'Share']]
@@ -532,7 +537,7 @@ class ReportService:
             # 6. TOP DETECTED THREATS  (new page)
             # ════════════════════════════════════════════════════════
             elements.append(PageBreak())
-            elements.append(_section('Top Detected Threats'))
+            elements.append(_section('Top Detected Threats', 'Highest scoring anomalies and context'))
             elements.append(Spacer(1, 0.06 * inch))
 
             if top_anomalies:
@@ -588,7 +593,7 @@ class ReportService:
             # 7. MITRE ATT&CK
             # ════════════════════════════════════════════════════════
             if top_techniques:
-                elements.append(_section('MITRE ATT&CK Techniques'))
+                elements.append(_section('MITRE ATT&CK Techniques', 'Technique and tactic summary'))
                 elements.append(Spacer(1, 0.06 * inch))
                 mitre_rows = [['Technique ID', 'Tactic', 'Count']]
                 for r in top_techniques:
@@ -621,7 +626,7 @@ class ReportService:
             # ════════════════════════════════════════════════════════
             recommendations = self._build_recommendations(severity, top_sources, top_techniques)
             if recommendations:
-                elements.append(_section('Recommended Actions'))
+                elements.append(_section('Recommended Actions', 'Priority response and mitigation guidance'))
                 elements.append(Spacer(1, 0.06 * inch))
                 rec_rows = []
                 for idx, rec in enumerate(recommendations, 1):
@@ -1314,3 +1319,4 @@ class ReportService:
 
 # Global instance
 report_service = ReportService()
+

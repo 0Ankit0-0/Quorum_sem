@@ -63,7 +63,8 @@ class LogService:
         progress_callback: Optional[callable] = None
     ) -> Dict[str, Any]:
         """Ingest a single log file"""
-        start = time.time()
+        start = time.perf_counter()
+        insert_seconds = 0.0
         file_path = Path(file_path)
         logger.info(f"Starting ingestion: {file_path}")
 
@@ -77,7 +78,9 @@ class LogService:
                 batch.append(entry.to_dict())
                 if len(batch) >= self.batch_size:
                     try:
+                        insert_start = time.perf_counter()
                         db.insert_batch('logs', batch)
+                        insert_seconds += time.perf_counter() - insert_start
                         total_inserted += len(batch)
                         if progress_callback:
                             progress_callback(total_inserted, None,
@@ -90,13 +93,16 @@ class LogService:
 
             if batch:
                 try:
+                    insert_start = time.perf_counter()
                     db.insert_batch('logs', batch)
+                    insert_seconds += time.perf_counter() - insert_start
                     total_inserted += len(batch)
                 except Exception as e:
                     logger.error(f"Final batch insert failed: {e}")
                     error_count += len(batch)
 
-            duration = time.time() - start
+            duration = time.perf_counter() - start
+            parse_seconds = max(0.0, duration - insert_seconds)
             stats = {
                 'file_path': str(file_path),
                 'file_size_mb': round(file_path.stat().st_size / (1024 * 1024), 4),
@@ -104,6 +110,8 @@ class LogService:
                 'parse_errors': parser.error_count,
                 'insert_errors': error_count,
                 'duration_seconds': round(duration, 2),
+                'parse_seconds': round(parse_seconds, 2),
+                'insert_seconds': round(insert_seconds, 2),
                 'entries_per_second': round(total_inserted / duration, 2) if duration > 0 else 0,
                 'timestamp': datetime.utcnow().isoformat()
             }

@@ -40,8 +40,16 @@ class AnalysisService:
         auto_report: bool = True,
         force_retrain: bool = False,
     ) -> Dict[str, Any]:
-        start_analysis_time = time.time()
+        start_analysis_time = time.perf_counter()
         timer = StepTimer()
+        timings: Dict[str, float] = {
+            "load_logs_seconds": 0.0,
+            "feature_extraction_seconds": 0.0,
+            "detection_seconds": 0.0,
+            "insert_anomalies_seconds": 0.0,
+            "mitre_map_seconds": 0.0,
+            "report_seconds": 0.0,
+        }
 
         session_id = str(uuid.uuid4())
         self.current_session_id = session_id
@@ -54,7 +62,9 @@ class AnalysisService:
                 session_id, requested_algorithm, start_time, end_time, threshold, log_source
             )
 
+            load_start = time.perf_counter()
             logs_data = self._load_logs(start_time, end_time, log_source)
+            timings["load_logs_seconds"] = time.perf_counter() - load_start
             total_logs = len(logs_data)
             if total_logs == 0:
                 return {
@@ -111,6 +121,7 @@ class AnalysisService:
                 timer.start("feature_extraction")
                 features, feature_names = feature_extractor.extract_batch(chunk)
                 feat_elapsed = timer.stop("feature_extraction").seconds
+                timings["feature_extraction_seconds"] += feat_elapsed
                 logger.info(f"Feature extraction time: {feat_elapsed:.3f} sec")
 
                 timer.start("detection")
@@ -122,6 +133,7 @@ class AnalysisService:
                     force_retrain=force_retrain,
                 )
                 detect_elapsed = timer.stop("detection").seconds
+                timings["detection_seconds"] += detect_elapsed
                 logger.info(f"Detection time: {detect_elapsed:.3f} sec")
 
                 anomalies.extend(
@@ -147,18 +159,16 @@ class AnalysisService:
 
             if anomalies:
                 anomaly_dicts = [a.to_dict() for a in anomalies]
+                insert_start = time.perf_counter()
                 db.insert_batch("anomalies", anomaly_dicts)
+                timings["insert_anomalies_seconds"] = time.perf_counter() - insert_start
 
+            mitre_start = time.perf_counter()
             self._map_to_mitre(anomalies)
+            timings["mitre_map_seconds"] = time.perf_counter() - mitre_start
 
-            duration = time.time() - start_analysis_time
-            self._update_session(
-                session_id,
-                status="completed",
-                logs_analyzed=total_logs,
-                anomalies_detected=len(anomalies),
-                duration=duration,
-            )
+            duration = time.perf_counter() - start_analysis_time
+            timings["total_seconds"] = duration
 
             batch = AnomalyBatch(
                 anomalies=anomalies,
@@ -174,13 +184,22 @@ class AnalysisService:
             if auto_report and anomalies:
                 try:
                     from services.report_service import report_service
-
+                    report_start = time.perf_counter()
                     report_service.generate_session_reports(session_id)
+                    timings["report_seconds"] = time.perf_counter() - report_start
                     logger.info(f"Auto-generated reports for session {session_id}")
                 except Exception as e:
                     logger.warning(f"Auto-report generation failed: {e}")
 
             logger.info(f"Total pipeline time: {duration:.3f} sec")
+            self._update_session(
+                session_id,
+                status="completed",
+                logs_analyzed=total_logs,
+                anomalies_detected=len(anomalies),
+                duration=duration,
+                metadata={"timings": {k: round(v, 3) for k, v in timings.items()}},
+            )
 
             return {
                 "session_id": session_id,
@@ -193,11 +212,17 @@ class AnalysisService:
                 "threshold": threshold,
                 "log_source": log_source,
                 "summary": summary,
+                "timings": {k: round(v, 3) for k, v in timings.items()},
             }
 
         except Exception as e:
             logger.error(f"Analysis failed: {e}")
-            self._update_session(session_id, status="failed", error=str(e))
+            self._update_session(
+                session_id,
+                status="failed",
+                error=str(e),
+                metadata={"timings": {k: round(v, 3) for k, v in timings.items()}},
+            )
             raise AIEngineError(f"Analysis failed: {e}")
 
     def _build_anomalies(
@@ -341,6 +366,7 @@ class AnalysisService:
         anomalies_detected=None,
         duration=None,
         error=None,
+        metadata: Optional[Dict[str, Any]] = None,
     ):
         import json
 
@@ -359,7 +385,10 @@ class AnalysisService:
         if status == "completed":
             updates.append("end_time = ?")
             params.append(datetime.utcnow())
-        if error:
+        if metadata is not None:
+            updates.append("metadata = ?")
+            params.append(json.dumps(metadata))
+        elif error:
             updates.append("metadata = ?")
             params.append(json.dumps({"error": error}))
 

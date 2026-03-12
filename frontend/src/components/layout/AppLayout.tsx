@@ -34,18 +34,33 @@ export default function AppLayout({ children, title, subtitle }: AppLayoutProps)
   useEffect(() => {
     let mounted = true;
 
+    const isOnlinePayload = (data: any) => {
+      const status = String(data?.status ?? "").toLowerCase();
+      if (status === "online" || status === "healthy") {
+        return true;
+      }
+      // If status is missing but we got a response, assume reachable.
+      return Boolean(data);
+    };
+
     const checkBackend = async () => {
       try {
-        const root = await apiClient.get("/", { timeout: 2000 });
+        const status = await apiClient.get("/system/status", { timeout: 2000 });
         if (!mounted) return;
-        const online = String(root.data?.status ?? "").toLowerCase() === "online";
-        setIsBackendOnline(online);
+        setIsBackendOnline(isOnlinePayload(status.data));
         failedChecksRef.current = 0;
       } catch {
-        if (!mounted) return;
-        failedChecksRef.current += 1;
-        if (failedChecksRef.current >= 3) {
-          setIsBackendOnline(false);
+        try {
+          const root = await apiClient.get("/", { timeout: 2000 });
+          if (!mounted) return;
+          setIsBackendOnline(isOnlinePayload(root.data));
+          failedChecksRef.current = 0;
+        } catch {
+          if (!mounted) return;
+          failedChecksRef.current += 1;
+          if (failedChecksRef.current >= 3) {
+            setIsBackendOnline(false);
+          }
         }
       }
     };

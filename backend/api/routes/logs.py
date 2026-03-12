@@ -2,6 +2,7 @@
 Log Management Routes
 """
 import shutil
+import time
 from fastapi import APIRouter, HTTPException, BackgroundTasks, status, UploadFile, File, Form, Body
 from pathlib import Path
 from typing import Optional, List
@@ -71,7 +72,9 @@ async def ingest_log_file(
             safe_name = saved_path.name
 
             try:
+                upload_start = time.perf_counter()
                 _persist_uploaded_file(file, saved_path)
+                upload_seconds = time.perf_counter() - upload_start
 
                 stats = log_service.ingest_file(saved_path, source_type)
                 dataset_info = dataset_service.ingest_uploaded_file(saved_path, source_type)
@@ -83,6 +86,15 @@ async def ingest_log_file(
                     "saved_path": str(saved_path),
                     "dataset_id": dataset_info["dataset_id"],
                     "dataset_records": dataset_info["records_total"],
+                    "timings": {
+                        "upload_seconds": round(upload_seconds, 2),
+                        "ingest_total_seconds": stats.get("duration_seconds", 0.0),
+                        "ingest_parse_seconds": stats.get("parse_seconds", 0.0),
+                        "ingest_insert_seconds": stats.get("insert_seconds", 0.0),
+                        "dataset_total_seconds": dataset_info.get("duration_seconds", 0.0),
+                        "dataset_parse_seconds": dataset_info.get("parse_seconds", 0.0),
+                        "dataset_insert_seconds": dataset_info.get("insert_seconds", 0.0),
+                    },
                 }
             finally:
                 try:
@@ -213,7 +225,42 @@ async def get_recent_logs(limit: int = 100, filename: Optional[str] = None, sear
     """Get most recent log entries"""
     try:
         if filename:
-            return dataset_service.fetch_recent_logs(filename=filename, limit=limit, search=search)
+            # Avoid auto-ingesting datasets here to keep UI responsive.
+            dataset_rows = dataset_service.fetch_recent_logs(
+                filename=filename,
+                limit=limit,
+                search=search,
+                auto_ingest=False,
+            )
+            if dataset_rows:
+                return dataset_rows
+
+            # Fallback to main logs table by source when dataset DB is not ready.
+            from core.database import db
+            conditions = ["source = ?"]
+            params: List[Any] = [filename]
+            if search:
+                conditions.append("(lower(message) LIKE ? OR lower(source) LIKE ? OR lower(severity) LIKE ?)")
+                pattern = f"%{search.lower()}%"
+                params.extend([pattern, pattern, pattern])
+            where_clause = " AND ".join(conditions)
+            query = f"""
+                SELECT
+                    id,
+                    timestamp,
+                    source,
+                    event_type,
+                    severity,
+                    message,
+                    hostname,
+                    username
+                FROM logs
+                WHERE {where_clause}
+                ORDER BY timestamp DESC
+                LIMIT ?
+            """
+            params.append(limit)
+            return db.fetch_all(query, tuple(params))
 
         from core.database import db
         

@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "json"  # json or text
     LOG_FILE: str = "quorum.log"
+    LOG_CSV_FILE: Optional[str] = "quorum.csv"
     
     # Security (SOUP)
     SOUP_PUBLIC_KEY: str = "public_key.pem"

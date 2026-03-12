@@ -27,7 +27,8 @@ setup_logging(
     log_level=settings.LOG_LEVEL,
     log_format=settings.LOG_FORMAT,
     log_file=settings.LOG_FILE,
-    log_dir=settings.LOGS_DIR
+    log_dir=settings.LOGS_DIR,
+    log_csv_file=settings.LOG_CSV_FILE,
 )
 
 logger = get_logger(__name__)

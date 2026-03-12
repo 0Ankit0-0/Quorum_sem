@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import csv
 import zipfile
+import time
 
 import duckdb
 
@@ -171,9 +172,13 @@ class DatasetService:
                     "db_path": record.db_path,
                     "records_total": existing_total,
                     "inserted_now": 0,
+                    "duration_seconds": 0.0,
+                    "parse_seconds": 0.0,
+                    "insert_seconds": 0.0,
                 }
 
             rows = []
+            parse_start = time.perf_counter()
             for entry in parser.parse():
                 payload = entry.to_dict()
                 rows.append(
@@ -194,7 +199,10 @@ class DatasetService:
                         datetime.utcnow(),
                     )
                 )
+            parse_seconds = time.perf_counter() - parse_start
+            insert_seconds = 0.0
             if rows:
+                insert_start = time.perf_counter()
                 conn.executemany(
                     """
                     INSERT INTO logs (
@@ -204,13 +212,18 @@ class DatasetService:
                     """,
                     rows,
                 )
+                insert_seconds = time.perf_counter() - insert_start
             count_row = conn.execute("SELECT COUNT(*) FROM logs").fetchone()
             total = int(count_row[0]) if count_row else 0
+            duration = parse_seconds + insert_seconds
             return {
                 "dataset_id": record.dataset_id,
                 "db_path": record.db_path,
                 "records_total": total,
                 "inserted_now": len(rows),
+                "duration_seconds": round(duration, 2),
+                "parse_seconds": round(parse_seconds, 2),
+                "insert_seconds": round(insert_seconds, 2),
             }
         finally:
             conn.close()
@@ -266,8 +279,13 @@ class DatasetService:
         filename: str,
         limit: int = 100,
         search: Optional[str] = None,
+        auto_ingest: bool = True,
     ) -> List[Dict[str, Any]]:
-        dataset = self.ensure_dataset_for_filename(filename)
+        dataset = (
+            self.ensure_dataset_for_filename(filename)
+            if auto_ingest
+            else self.get_dataset_by_filename(filename)
+        )
         if not dataset:
             return []
         db_path = Path(dataset["db_path"])

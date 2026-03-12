@@ -33,6 +33,9 @@ export default function Logs() {
     entries: number;
     errors: number;
     duration: number;
+    uploadSeconds: number;
+    parseSeconds: number;
+    insertSeconds: number;
   }>(null);
 
   const [files, setFiles] = useState<UploadedFile[]>([]);
@@ -95,6 +98,15 @@ export default function Logs() {
         entries: result.entries_inserted,
         errors: result.parse_errors + result.insert_errors,
         duration: result.duration_seconds,
+        uploadSeconds: result.timings?.upload_seconds ?? 0,
+        parseSeconds:
+          result.timings?.ingest_parse_seconds ??
+          result.parse_seconds ??
+          0,
+        insertSeconds:
+          result.timings?.ingest_insert_seconds ??
+          result.insert_seconds ??
+          0,
       });
       await loadFiles();
       setSelectedFile(file.name);
@@ -185,6 +197,18 @@ export default function Logs() {
               <div>
                 <p className="text-muted-foreground text-xs">Duration</p>
                 <p className="font-mono font-semibold text-cyan">{uploadResult.duration}s</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground text-xs">Upload</p>
+                <p className="font-mono font-semibold text-foreground">{uploadResult.uploadSeconds}s</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground text-xs">Parse</p>
+                <p className="font-mono font-semibold text-foreground">{uploadResult.parseSeconds}s</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground text-xs">Insert</p>
+                <p className="font-mono font-semibold text-foreground">{uploadResult.insertSeconds}s</p>
               </div>
             </div>
           </div>

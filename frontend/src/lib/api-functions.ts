@@ -168,6 +168,17 @@ export interface LogIngestResult {
   parse_errors: number;
   insert_errors: number;
   duration_seconds: number;
+  parse_seconds?: number;
+  insert_seconds?: number;
+  timings?: {
+    upload_seconds?: number;
+    ingest_total_seconds?: number;
+    ingest_parse_seconds?: number;
+    ingest_insert_seconds?: number;
+    dataset_total_seconds?: number;
+    dataset_parse_seconds?: number;
+    dataset_insert_seconds?: number;
+  };
 }
 
 export interface ReportGenerationResult {
