@@ -1,8 +1,3 @@
-Here is a comprehensive and professionally structured `README.md` that combines the information from your frontend and backend setups. This is perfect for the root directory of your GitHub repository.
-
-***
-
-```markdown
 # 🛡️ Project Quorum
 
 **AI-Powered Log Analysis for Secure Offline Environments**
